@@ -148,7 +148,7 @@ jobs:
           echo GOPATH=$(go env GOPATH) >> $GITHUB_ENV
           echo PWD=$(pwd) >> $GITHUB_ENV
           echo "$GPG_PRIVATE_KEY" > gpg_signing_key.asc
-      -
+      - 
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
