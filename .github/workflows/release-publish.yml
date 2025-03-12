@@ -151,6 +151,12 @@ jobs:
       - 
         name: Check Git Remote
         run: git remote -v      
+      - 
+        name: Fix Git Remote
+        run: git remote set-url origin https://github.com/criteo-forks/cloudnative-pg.git
+      - 
+        name: Check Git Remote
+        run: git remote
       -
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
