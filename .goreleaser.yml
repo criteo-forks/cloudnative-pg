@@ -3,7 +3,7 @@ project_name: cnpg
 
 release:
   github:
-    owner: cloudnative-pg
+    owner: criteo-forks
     name: cloudnative-pg
 
 env:
@@ -24,9 +24,9 @@ builds:
   ldflags:
     - -s
     - -w
-    - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion={{.Env.VERSION}}
-    - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildCommit={{.Env.COMMIT}}
-    - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildDate={{.Env.DATE}}
+    - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildVersion={{.Env.VERSION}}
+    - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildCommit={{.Env.COMMIT}}
+    - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildDate={{.Env.DATE}}
   goos:
     - linux
   goarch:
@@ -45,9 +45,9 @@ builds:
     - -race
     - -s
     - -w
-    - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion={{.Env.VERSION}}
-    - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildCommit={{.Env.COMMIT}}
-    - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildDate={{.Env.DATE}}
+    - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildVersion={{.Env.VERSION}}
+    - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildCommit={{.Env.COMMIT}}
+    - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildDate={{.Env.DATE}}
   goos:
     - linux
   goarch:
@@ -62,24 +62,14 @@ builds:
   ldflags:
   - -s
   - -w
-  - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildVersion={{.Env.VERSION}}
-  - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildCommit={{.Env.COMMIT}}
-  - -X github.com/cloudnative-pg/cloudnative-pg/pkg/versions.buildDate={{.Env.DATE}}
+  - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildVersion={{.Env.VERSION}}
+  - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildCommit={{.Env.COMMIT}}
+  - -X github.com/criteo-forks/cloudnative-pg/pkg/versions.buildDate={{.Env.DATE}}
   goos:
-  - darwin
   - linux
-  - windows
   goarch:
   - amd64
   - 386
-  - arm64
-  - arm
-  - ppc64le
-  - s390x
-  goarm:
-  - 5
-  - 6
-  - 7
   ignore:
   - goos: darwin
     goarch: 386
@@ -98,45 +88,15 @@ archives:
   builds:
   - kubectl-cnpg
 
-nfpms:
-  - id: kubectl-cnpg
-    file_name_template: >-
-      kubectl-cnpg_{{ .Version }}_
-      {{- .Os }}_
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
-      {{- else }}{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ end }}
-    homepage: https://github.com/cloudnative-pg/cloudnative-pg
-    bindir: /usr/local/bin
-    maintainer: 'Marco Nenciarini <marco.nenciarini@enterprisedb.com>'
-    builds:
-      - kubectl-cnpg
-    formats:
-      - rpm
-      - deb
-    rpm:
-      signature:
-        key_file: gpg_signing_key.asc
-    deb:
-      signature:
-        key_file: gpg_signing_key.asc
-
-checksum:
-  name_template: '{{ .ProjectName }}-{{ .Version }}-checksums.txt'
-
 snapshot:
   version_template: "{{ .Tag }}-next"
 
 changelog:
   disable: true
 
-signs:
-  - artifacts: checksum
-    args: ["--batch", "-u", "{{ .Env.GPG_FINGERPRINT }}", "--output", "${signature}", "--detach-sign", "${artifact}"]
-
 krews:
   - name: cnpg
-    homepage: https://github.com/cloudnative-pg/cloudnative-pg
+    homepage: https://github.com/criteo-forks/cloudnative-pg
     short_description: 'Manage your CloudNativePG clusters'
     skip_upload: true
     description: 'This plugin provides multiple commands to help you manage your CloudNativePG clusters.'
