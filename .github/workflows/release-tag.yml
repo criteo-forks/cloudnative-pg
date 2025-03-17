@@ -1,4 +1,3 @@
-# Create a tag when a PR on a release/v* branch is merged
 name: release-tag
 
 on:
