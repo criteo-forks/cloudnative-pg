@@ -1,3 +1,4 @@
+# Workflow simplifié pour construire et publier les artefacts
 name: publish-artifacts
 
 on:
@@ -32,7 +33,7 @@ defaults:
 jobs:
   build-and-publish:
     name: Build and publish artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
