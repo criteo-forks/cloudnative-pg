@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
       -
         name: Create tag
-        if: github.event.pull_request.merged == true && startsWith(github.head_ref, 'release/v')
+        if: github.event.pull_request.merged == true && startsWith(github.head_ref, 'release-')
         uses: christophebedard/tag-version-commit@57ffb155fc61c8ab098fcfa273469b532c1d4ce7 # v1.7.0
         with:
           token: ${{ secrets.REPO_GHA_PAT }}
