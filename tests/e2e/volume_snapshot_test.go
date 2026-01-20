@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -24,13 +27,14 @@ import (
 	"strings"
 	"time"
 
-	volumesnapshot "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	k8client "sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/tests"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/backups"
@@ -55,8 +59,8 @@ var _ = Describe("Verify Volume Snapshot",
 			backupName string,
 			clusterName string,
 			namespace string,
-		) (volumesnapshot.VolumeSnapshotList, error) {
-			var snapshotList volumesnapshot.VolumeSnapshotList
+		) (volumesnapshotv1.VolumeSnapshotList, error) {
+			var snapshotList volumesnapshotv1.VolumeSnapshotList
 			err := env.Client.List(env.Ctx, &snapshotList, k8client.InNamespace(namespace),
 				k8client.MatchingLabels{
 					utils.ClusterLabelName:    clusterName,
@@ -218,18 +222,14 @@ var _ = Describe("Verify Volume Snapshot",
 					AssertCreateCluster(namespace, clusterToSnapshotName, clusterToSnapshot, env)
 				})
 
-				By("verify test connectivity to minio using barman-cloud-wal-archive script", func() {
-					primaryPod, err := clusterutils.GetPrimary(env.Ctx, env.Client, namespace,
-						clusterToSnapshotName)
+				By("verify connectivity of barman to minio", func() {
+					primaryPod, err := clusterutils.GetPrimary(env.Ctx, env.Client, namespace, clusterToSnapshotName)
 					Expect(err).ToNot(HaveOccurred())
 					Eventually(func() (bool, error) {
-						connectionStatus, err := minio.TestConnectivityUsingBarmanCloudWalArchive(
-							namespace, clusterToSnapshotName, primaryPod.GetName(), "minio", "minio123",
-							minioEnv.ServiceName)
-						if err != nil {
-							return false, err
-						}
-						return connectionStatus, nil
+						connectionStatus, err := minio.TestBarmanConnectivity(
+							namespace, clusterToSnapshotName, primaryPod.Name,
+							"minio", "minio123", minioEnv.ServiceName)
+						return connectionStatus, err
 					}, 60).Should(BeTrue())
 				})
 
@@ -237,14 +237,20 @@ var _ = Describe("Verify Volume Snapshot",
 				By("creating a snapshot and waiting until it's completed", func() {
 					var err error
 					backupName := fmt.Sprintf("%s-example", clusterToSnapshotName)
-					backup, err = backups.CreateOnDemand(
+					backup, err = backups.Create(
 						env.Ctx,
 						env.Client,
-						namespace,
-						clusterToSnapshotName,
-						backupName,
-						apiv1.BackupTargetStandby,
-						apiv1.BackupMethodVolumeSnapshot,
+						apiv1.Backup{
+							ObjectMeta: metav1.ObjectMeta{
+								Namespace: namespace,
+								Name:      backupName,
+							},
+							Spec: apiv1.BackupSpec{
+								Target:  apiv1.BackupTargetStandby,
+								Method:  apiv1.BackupMethodVolumeSnapshot,
+								Cluster: apiv1.LocalObjectReference{Name: clusterToSnapshotName},
+							},
+						},
 					)
 					Expect(err).ToNot(HaveOccurred())
 					// trigger a checkpoint
@@ -370,8 +376,8 @@ var _ = Describe("Verify Volume Snapshot",
 			getAndVerifySnapshots := func(
 				clusterToBackup *apiv1.Cluster,
 				backup apiv1.Backup,
-			) volumesnapshot.VolumeSnapshotList {
-				snapshotList := volumesnapshot.VolumeSnapshotList{}
+			) volumesnapshotv1.VolumeSnapshotList {
+				snapshotList := volumesnapshotv1.VolumeSnapshotList{}
 				By("fetching the volume snapshots", func() {
 					var err error
 					snapshotList, err = getSnapshots(backup.Name, clusterToBackup.Name, backup.Namespace)
@@ -566,14 +572,20 @@ var _ = Describe("Verify Volume Snapshot",
 
 				backupName := "single-instance-snap"
 				By("taking a backup snapshot", func() {
-					_, err := backups.CreateOnDemand(
+					_, err := backups.Create(
 						env.Ctx,
 						env.Client,
-						namespace,
-						clusterToBackupName,
-						backupName,
-						apiv1.BackupTargetStandby,
-						apiv1.BackupMethodVolumeSnapshot,
+						apiv1.Backup{
+							ObjectMeta: metav1.ObjectMeta{
+								Namespace: namespace,
+								Name:      backupName,
+							},
+							Spec: apiv1.BackupSpec{
+								Target:  apiv1.BackupTargetStandby,
+								Method:  apiv1.BackupMethodVolumeSnapshot,
+								Cluster: apiv1.LocalObjectReference{Name: clusterToBackupName},
+							},
+						},
 					)
 					Expect(err).NotTo(HaveOccurred())
 				})
@@ -668,18 +680,14 @@ var _ = Describe("Verify Volume Snapshot",
 					AssertCreateCluster(namespace, clusterToSnapshotName, clusterToSnapshot, env)
 				})
 
-				By("verify test connectivity to minio using barman-cloud-wal-archive script", func() {
-					primaryPod, err := clusterutils.GetPrimary(env.Ctx, env.Client, namespace,
-						clusterToSnapshotName)
+				By("verify connectivity of barman to minio", func() {
+					primaryPod, err := clusterutils.GetPrimary(env.Ctx, env.Client, namespace, clusterToSnapshotName)
 					Expect(err).ToNot(HaveOccurred())
 					Eventually(func() (bool, error) {
-						connectionStatus, err := minio.TestConnectivityUsingBarmanCloudWalArchive(
-							namespace, clusterToSnapshotName, primaryPod.GetName(), "minio", "minio123",
-							minioEnv.ServiceName)
-						if err != nil {
-							return false, err
-						}
-						return connectionStatus, nil
+						connectionStatus, err := minio.TestBarmanConnectivity(
+							namespace, clusterToSnapshotName, primaryPod.Name,
+							"minio", "minio123", minioEnv.ServiceName)
+						return connectionStatus, err
 					}, 60).Should(BeTrue())
 				})
 			})
@@ -838,9 +846,21 @@ var _ = Describe("Verify Volume Snapshot",
 					Expect(err).ToNot(HaveOccurred())
 				})
 
-				By("checking the the cluster is working", func() {
+				By("checking the cluster is working", func() {
 					// Setting up a cluster with three pods is slow, usually 200-600s
 					AssertClusterIsReady(namespace, clusterToSnapshotName, testTimeouts[timeouts.ClusterIsReady], env)
+				})
+
+				By("checking the new replicas have been created using the snapshot", func() {
+					pvcList, err := storage.GetPVCList(env.Ctx, env.Client, namespace)
+					Expect(err).ToNot(HaveOccurred())
+					for _, pvc := range pvcList.Items {
+						if pvc.Labels[utils.ClusterInstanceRoleLabelName] == specs.ClusterRoleLabelReplica &&
+							pvc.Labels[utils.ClusterLabelName] == clusterToSnapshotName {
+							Expect(pvc.Spec.DataSource.Kind).To(Equal(apiv1.VolumeSnapshotKind))
+							Expect(pvc.Spec.DataSourceRef.Kind).To(Equal(apiv1.VolumeSnapshotKind))
+						}
+					}
 				})
 
 				// we need to verify the streaming replica continue works

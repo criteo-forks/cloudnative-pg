@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -116,7 +119,7 @@ var _ = Describe("Managed roles tests", Label(tests.LabelSmoke, tests.LabelBasic
 		assertRoleStatus := func(namespace, clusterName, query, expectedResult string) {
 			primaryPod, err := clusterutils.GetPrimary(env.Ctx, env.Client, namespace, clusterName)
 			Expect(err).ToNot(HaveOccurred())
-			Eventually(func() string {
+			Eventually(func(g Gomega) {
 				stdout, _, err := exec.QueryInInstancePod(
 					env.Ctx, env.Client, env.Interface, env.RestClientConfig,
 					exec.PodLocator{
@@ -125,11 +128,9 @@ var _ = Describe("Managed roles tests", Label(tests.LabelSmoke, tests.LabelBasic
 					},
 					postgres.PostgresDBName,
 					query)
-				if err != nil {
-					return ""
-				}
-				return strings.TrimSpace(stdout)
-			}, 30).Should(Equal(expectedResult))
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(strings.TrimSpace(stdout)).To(Equal(expectedResult))
+			}, 30).Should(Succeed())
 		}
 
 		It("can create roles specified in the managed roles stanza", func() {
@@ -405,11 +406,11 @@ var _ = Describe("Managed roles tests", Label(tests.LabelSmoke, tests.LabelBasic
 				}
 				err = env.Client.Patch(env.Ctx, updated, client.MergeFrom(cluster))
 				Expect(err).ToNot(HaveOccurred())
-				Eventually(func() int {
+				Eventually(func(g Gomega) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-					Expect(err).ToNot(HaveOccurred())
-					return len(cluster.Status.ManagedRolesStatus.CannotReconcile)
-				}, 30).Should(Equal(0))
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(cluster.Status.ManagedRolesStatus.CannotReconcile).To(BeEmpty())
+				}, 30).Should(Succeed())
 				assertInRoles(namespace, primaryPod.Name, newUserName, []string{"postgres", username})
 			})
 
@@ -427,11 +428,11 @@ var _ = Describe("Managed roles tests", Label(tests.LabelSmoke, tests.LabelBasic
 				}
 				err = env.Client.Patch(env.Ctx, updated, client.MergeFrom(cluster))
 				Expect(err).ToNot(HaveOccurred())
-				Eventually(func() int {
+				Eventually(func(g Gomega) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-					Expect(err).ToNot(HaveOccurred())
-					return len(cluster.Status.ManagedRolesStatus.CannotReconcile)
-				}, 30).Should(Equal(0))
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(cluster.Status.ManagedRolesStatus.CannotReconcile).To(BeEmpty())
+				}, 30).Should(Succeed())
 				assertInRoles(namespace, primaryPod.Name, newUserName, []string{username})
 			})
 
@@ -450,22 +451,23 @@ var _ = Describe("Managed roles tests", Label(tests.LabelSmoke, tests.LabelBasic
 				// user not changed
 				Eventually(QueryMatchExpectationPredicate(primaryPod, postgres.PostgresDBName,
 					roleExistsQuery(unrealizableUser), "t"), 30).Should(Succeed())
-				Eventually(func() int {
+				Eventually(func(g Gomega) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-					Expect(err).ToNot(HaveOccurred())
-					return len(cluster.Status.ManagedRolesStatus.CannotReconcile)
-				}, 30).Should(Equal(1))
-				Eventually(func() int {
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(cluster.Status.ManagedRolesStatus.CannotReconcile).To(HaveLen(1))
+				}, 30).Should(Succeed())
+				Eventually(func(g Gomega) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-					Expect(err).ToNot(HaveOccurred())
-					return len(cluster.Status.ManagedRolesStatus.CannotReconcile[unrealizableUser])
-				}, 30).Should(Equal(1))
-				Eventually(func() string {
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(cluster.Status.ManagedRolesStatus.CannotReconcile[unrealizableUser]).To(HaveLen(1))
+				}, 30).Should(Succeed())
+				Eventually(func(g Gomega) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-					Expect(err).ToNot(HaveOccurred())
-					return cluster.Status.ManagedRolesStatus.CannotReconcile[unrealizableUser][0]
-				}, 30).Should(ContainSubstring(fmt.Sprintf("role \"%s\" is a member of role \"%s\"",
-					unrealizableUser, unrealizableUser)))
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(cluster.Status.ManagedRolesStatus.CannotReconcile[unrealizableUser][0]).To(
+						ContainSubstring(fmt.Sprintf("role \"%s\" is a member of role \"%s\"",
+							unrealizableUser, unrealizableUser)))
+				}, 30).Should(Succeed())
 			})
 		})
 

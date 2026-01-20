@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -180,6 +183,20 @@ var _ = Describe("Imports with Monolithic Approach", Label(tests.LabelImportingD
 				Expect(err).ToNot(HaveOccurred())
 				Expect(sourceDatabases).Should(ContainElement(datName))
 			}
+		})
+
+		By("verifying that no extra application database or owner were created", func() {
+			stmt, err := connTarget.Prepare("SELECT count(*) FROM pg_catalog.pg_database WHERE datname = $1")
+			Expect(err).ToNot(HaveOccurred())
+			var matchCount int
+			err = stmt.QueryRowContext(env.Ctx, "app").Scan(&matchCount)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(matchCount).To(BeZero(), "app database should not exist")
+			stmt, err = connTarget.Prepare("SELECT count(*) from pg_catalog.pg_user WHERE usename = $1")
+			Expect(err).ToNot(HaveOccurred())
+			err = stmt.QueryRowContext(env.Ctx, "app").Scan(&matchCount)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(matchCount).To(BeZero(), "app user should not exist")
 		})
 
 		By(fmt.Sprintf("verifying that the source superuser '%s' became a normal user in target",

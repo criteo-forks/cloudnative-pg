@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package controller
@@ -21,7 +24,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/rbac/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -47,8 +50,8 @@ type poolerManagedResources struct {
 	// The RBAC resources needed for the pooler instance manager
 	// to watch over the relative Pooler resource
 	ServiceAccount *corev1.ServiceAccount
-	RoleBinding    *v1.RoleBinding
-	Role           *v1.Role
+	RoleBinding    *rbacv1.RoleBinding
+	Role           *rbacv1.Role
 }
 
 // getManagedResources detects the list of the resources created and manager
@@ -159,8 +162,8 @@ func getServiceAccountOrNil(
 }
 
 // getRoleOrNil gets a role with a certain name, returning nil when it doesn't exist
-func getRoleOrNil(ctx context.Context, r client.Client, objectKey client.ObjectKey) (*v1.Role, error) {
-	var role v1.Role
+func getRoleOrNil(ctx context.Context, r client.Client, objectKey client.ObjectKey) (*rbacv1.Role, error) {
+	var role rbacv1.Role
 	err := r.Get(ctx, objectKey, &role)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
@@ -174,8 +177,12 @@ func getRoleOrNil(ctx context.Context, r client.Client, objectKey client.ObjectK
 }
 
 // getRoleBindingOrNil gets a rolebinding with a certain name, returning nil when it doesn't exist
-func getRoleBindingOrNil(ctx context.Context, r client.Client, objectKey client.ObjectKey) (*v1.RoleBinding, error) {
-	var rb v1.RoleBinding
+func getRoleBindingOrNil(
+	ctx context.Context,
+	r client.Client,
+	objectKey client.ObjectKey,
+) (*rbacv1.RoleBinding, error) {
+	var rb rbacv1.RoleBinding
 	err := r.Get(ctx, objectKey, &rb)
 	if err != nil {
 		if apierrs.IsNotFound(err) {

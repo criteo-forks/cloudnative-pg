@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package pgbasebackup implement the pgbasebackup bootstrap method
@@ -21,7 +24,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,6 +37,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/external"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/constants"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/system"
 )
 
@@ -102,8 +108,6 @@ func NewCmd() *cobra.Command {
 
 // bootstrapUsingPgbasebackup creates a new data dir from the configuration
 func (env *CloneInfo) bootstrapUsingPgbasebackup(ctx context.Context) error {
-	contextLogger := log.FromContext(ctx)
-
 	var cluster apiv1.Cluster
 	err := env.client.Get(ctx, ctrl.ObjectKey{Namespace: env.info.Namespace, Name: env.info.ClusterName}, &cluster)
 	if err != nil {
@@ -131,22 +135,20 @@ func (env *CloneInfo) bootstrapUsingPgbasebackup(ctx context.Context) error {
 		return err
 	}
 
-	pgVersion, err := cluster.GetPostgresqlVersion()
-	if err != nil {
-		contextLogger.Warning(
-			"Error while parsing PostgreSQL server version to define connection options, defaulting to PostgreSQL 11",
-			"imageName", cluster.GetImageName(),
-			"err", err)
-	} else if pgVersion.Major() >= 12 {
-		// We explicitly disable wal_sender_timeout for join-related pg_basebackup executions.
-		// A short timeout could not be enough in case the instance is slow to send data,
-		// like when the I/O is overloaded.
-		connectionString += " options='-c wal_sender_timeout=0s'"
+	// We explicitly disable wal_sender_timeout for join-related pg_basebackup executions.
+	// A short timeout could not be enough in case the instance is slow to send data,
+	// like when the I/O is overloaded.
+	connectionString += " options='-c wal_sender_timeout=0s'"
+
+	if err := postgres.ClonePgData(ctx, connectionString, env.info.PgData, env.info.PgWal); err != nil {
+		return fmt.Errorf("while cloning pgdata: %w", err)
 	}
 
-	err = postgres.ClonePgData(ctx, connectionString, env.info.PgData, env.info.PgWal)
-	if err != nil {
-		return err
+	filePath := filepath.Join(env.info.PgData, constants.CheckEmptyWalArchiveFile)
+	// We create the check empty wal archive file to tell that we should check if the
+	// destination path is empty
+	if err := fileutils.CreateEmptyFile(filePath); err != nil {
+		return fmt.Errorf("could not create %v file: %w", filePath, err)
 	}
 
 	if cluster.IsReplica() {

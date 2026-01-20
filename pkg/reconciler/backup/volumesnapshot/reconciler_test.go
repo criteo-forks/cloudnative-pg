@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,17 +13,20 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package volumesnapshot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
-	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
-	v1 "k8s.io/api/core/v1"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -59,8 +63,8 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 	)
 	var (
 		cluster   *apiv1.Cluster
-		targetPod *v1.Pod
-		pvcs      []v1.PersistentVolumeClaim
+		targetPod *corev1.Pod
+		pvcs      []corev1.PersistentVolumeClaim
 		backup    *apiv1.Backup
 	)
 
@@ -81,13 +85,13 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 				},
 			},
 		}
-		targetPod = &v1.Pod{
+		targetPod = &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: namespace,
 				Name:      clusterName + "-2",
 			},
 		}
-		pvcs = []v1.PersistentVolumeClaim{
+		pvcs = []corev1.PersistentVolumeClaim{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      clusterName + "-2",
@@ -146,15 +150,15 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 		Expect(data.Len()).To(Equal(1))
 		Expect(data.Has(targetPod.Name)).To(BeTrue())
 
-		var snapshotList storagesnapshotv1.VolumeSnapshotList
+		var snapshotList volumesnapshotv1.VolumeSnapshotList
 		err = mockClient.List(ctx, &snapshotList)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(snapshotList.Items).NotTo(BeEmpty())
 	})
 
 	It("should not fence the target pod when there are existing volumesnapshots", func(ctx SpecContext) {
-		snapshots := storagesnapshotv1.VolumeSnapshotList{
-			Items: []storagesnapshotv1.VolumeSnapshot{
+		snapshots := volumesnapshotv1.VolumeSnapshotList{
+			Items: []volumesnapshotv1.VolumeSnapshot{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:   namespace,
@@ -205,8 +209,8 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 	})
 
 	It("should unfence the target pod when the snapshots have been provisioned", func(ctx SpecContext) {
-		snapshots := storagesnapshotv1.VolumeSnapshotList{
-			Items: []storagesnapshotv1.VolumeSnapshot{
+		snapshots := volumesnapshotv1.VolumeSnapshotList{
+			Items: []volumesnapshotv1.VolumeSnapshot{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace: namespace,
@@ -218,7 +222,7 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 							"avoid": "nil",
 						},
 					},
-					Status: &storagesnapshotv1.VolumeSnapshotStatus{
+					Status: &volumesnapshotv1.VolumeSnapshotStatus{
 						ReadyToUse:                     ptr.To(false),
 						Error:                          nil,
 						BoundVolumeSnapshotContentName: ptr.To(fmt.Sprintf("%s-content", backup.Name)),
@@ -236,7 +240,7 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 							"avoid": "nil",
 						},
 					},
-					Status: &storagesnapshotv1.VolumeSnapshotStatus{
+					Status: &volumesnapshotv1.VolumeSnapshotStatus{
 						ReadyToUse:                     ptr.To(false),
 						Error:                          nil,
 						BoundVolumeSnapshotContentName: ptr.To(fmt.Sprintf("%s-wal-content", backup.Name)),
@@ -281,8 +285,8 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 	})
 
 	It("should mark the backup as completed when the snapshots are ready", func(ctx SpecContext) {
-		snapshots := storagesnapshotv1.VolumeSnapshotList{
-			Items: []storagesnapshotv1.VolumeSnapshot{
+		snapshots := volumesnapshotv1.VolumeSnapshotList{
+			Items: []volumesnapshotv1.VolumeSnapshot{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace: namespace,
@@ -294,7 +298,7 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 							"avoid": "nil",
 						},
 					},
-					Status: &storagesnapshotv1.VolumeSnapshotStatus{
+					Status: &volumesnapshotv1.VolumeSnapshotStatus{
 						BoundVolumeSnapshotContentName: ptr.To(fmt.Sprintf("%s-content", backup.Name)),
 						ReadyToUse:                     ptr.To(true),
 						Error:                          nil,
@@ -312,7 +316,7 @@ var _ = Describe("Volumesnapshot reconciler", func() {
 							"avoid": "nil",
 						},
 					},
-					Status: &storagesnapshotv1.VolumeSnapshotStatus{
+					Status: &volumesnapshotv1.VolumeSnapshotStatus{
 						BoundVolumeSnapshotContentName: ptr.To(fmt.Sprintf("%s-wal-content", backup.Name)),
 						ReadyToUse:                     ptr.To(true),
 						Error:                          nil,
@@ -376,6 +380,7 @@ var _ = Describe("transferLabelsToAnnotations", func() {
 	It("should transfer specified labels to annotations", func() {
 		labels[utils.ClusterInstanceRoleLabelName] = exampleValueOne
 		labels[utils.InstanceNameLabelName] = exampleValueTwo
+		//nolint:staticcheck
 		labels[utils.ClusterRoleLabelName] = "value3"
 		labels["extraLabel"] = "value4" // This should not be transferred
 
@@ -383,6 +388,7 @@ var _ = Describe("transferLabelsToAnnotations", func() {
 
 		Expect(annotations[utils.ClusterInstanceRoleLabelName]).To(Equal(exampleValueOne))
 		Expect(annotations[utils.InstanceNameLabelName]).To(Equal(exampleValueTwo))
+		//nolint:staticcheck
 		Expect(annotations[utils.ClusterRoleLabelName]).To(Equal("value3"))
 		Expect(annotations).ToNot(HaveKey("extraLabel"))
 
@@ -394,12 +400,14 @@ var _ = Describe("transferLabelsToAnnotations", func() {
 
 	It("should not modify annotations if label is not present", func() {
 		labels[utils.ClusterInstanceRoleLabelName] = exampleValueOne
+		//nolint:staticcheck
 		labels[utils.ClusterRoleLabelName] = "value3"
 
 		transferLabelsToAnnotations(labels, annotations)
 
 		Expect(annotations[utils.ClusterInstanceRoleLabelName]).To(Equal(exampleValueOne))
 		Expect(annotations).ToNot(HaveKey(utils.InstanceNameLabelName))
+		//nolint:staticcheck
 		Expect(annotations[utils.ClusterRoleLabelName]).To(Equal("value3"))
 	})
 
@@ -418,14 +426,14 @@ var _ = Describe("transferLabelsToAnnotations", func() {
 var _ = Describe("annotateSnapshotsWithBackupData", func() {
 	var (
 		fakeClient   k8client.Client
-		snapshots    storagesnapshotv1.VolumeSnapshotList
+		snapshots    volumesnapshotv1.VolumeSnapshotList
 		backupStatus *apiv1.BackupStatus
 		startedAt    metav1.Time
 		stoppedAt    metav1.Time
 	)
 
 	BeforeEach(func() {
-		snapshots = storagesnapshotv1.VolumeSnapshotList{
+		snapshots = volumesnapshotv1.VolumeSnapshotList{
 			Items: slice{
 				{ObjectMeta: metav1.ObjectMeta{Name: "snapshot-1", Annotations: map[string]string{"avoid": "nil"}}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "snapshot-2", Annotations: map[string]string{"avoid": "nil"}}},
@@ -449,5 +457,139 @@ var _ = Describe("annotateSnapshotsWithBackupData", func() {
 			Expect(snapshot.Annotations[utils.BackupStartTimeAnnotationName]).To(BeEquivalentTo(startedAt.Format(time.RFC3339)))
 			Expect(snapshot.Annotations[utils.BackupEndTimeAnnotationName]).To(BeEquivalentTo(stoppedAt.Format(time.RFC3339)))
 		}
+	})
+})
+
+var _ = Describe("addDeadlineStatus", func() {
+	var (
+		ctx    context.Context
+		backup *apiv1.Backup
+		cli    k8client.Client
+	)
+
+	BeforeEach(func() {
+		ctx = context.TODO()
+		backup = &apiv1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "test-namespace",
+				Name:      "test-backup",
+			},
+			Status: apiv1.BackupStatus{
+				PluginMetadata: make(map[string]string),
+			},
+		}
+		cli = fake.NewClientBuilder().WithScheme(scheme.BuildWithAllKnownScheme()).
+			WithObjects(backup).
+			WithStatusSubresource(&apiv1.Backup{}).
+			Build()
+	})
+
+	It("should add deadline status if not present", func() {
+		err := addDeadlineStatus(ctx, cli, backup)
+		Expect(err).ToNot(HaveOccurred())
+
+		var updatedBackup apiv1.Backup
+		err = cli.Get(ctx, types.NamespacedName{Name: backup.Name, Namespace: backup.Namespace}, &updatedBackup)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(updatedBackup.Status.PluginMetadata).To(HaveKey(pluginName))
+		Expect(updatedBackup.Status.PluginMetadata[pluginName]).ToNot(BeEmpty())
+		Expect(updatedBackup.Status.PluginMetadata[pluginName]).To(MatchRegexp(`{"volumeSnapshotFirstFailure":\d+}`))
+	})
+
+	It("should not modify deadline status if already present", func() {
+		backup.Status.PluginMetadata[pluginName] = `{"volumeSnapshotFirstFailure": 1234567890}`
+		err := cli.Status().Update(ctx, backup)
+		Expect(err).ToNot(HaveOccurred())
+
+		err = addDeadlineStatus(ctx, cli, backup)
+		Expect(err).ToNot(HaveOccurred())
+
+		var updatedBackup apiv1.Backup
+		err = cli.Get(ctx, types.NamespacedName{Name: backup.Name, Namespace: backup.Namespace}, &updatedBackup)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(updatedBackup.Status.PluginMetadata[pluginName]).To(Equal(`{"volumeSnapshotFirstFailure": 1234567890}`))
+	})
+})
+
+var _ = Describe("isDeadlineExceeded", func() {
+	var backup *apiv1.Backup
+
+	BeforeEach(func() {
+		backup = &apiv1.Backup{
+			Status: apiv1.BackupStatus{
+				PluginMetadata: make(map[string]string),
+			},
+		}
+	})
+
+	It("should return an error if plugin metadata is empty", func() {
+		_, err := isDeadlineExceeded(backup)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("should return error if unmarshalling fails", func() {
+		backup.Status.PluginMetadata[pluginName] = "invalid-json"
+		exceeded, err := isDeadlineExceeded(backup)
+		Expect(err).To(HaveOccurred())
+		Expect(exceeded).To(BeFalse())
+	})
+
+	It("should return error if no volumeSnapshotFirstFailure found in plugin metadata", func() {
+		backup.Status.PluginMetadata[pluginName] = `{}`
+		exceeded, err := isDeadlineExceeded(backup)
+		Expect(err).To(HaveOccurred())
+		Expect(exceeded).To(BeFalse())
+	})
+
+	It("should return false if deadline has not exceeded", func() {
+		data := metadata{VolumeSnapshotFirstDetectedFailure: time.Now().Unix()}
+		rawData, _ := json.Marshal(data)
+		backup.Status.PluginMetadata[pluginName] = string(rawData)
+		backup.Annotations = map[string]string{utils.BackupVolumeSnapshotDeadlineAnnotationName: "10"}
+
+		exceeded, err := isDeadlineExceeded(backup)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(exceeded).To(BeFalse())
+	})
+
+	It("should return true if deadline has exceeded", func() {
+		data := metadata{VolumeSnapshotFirstDetectedFailure: time.Now().Add(-20 * time.Minute).Unix()}
+		rawData, _ := json.Marshal(data)
+		backup.Status.PluginMetadata[pluginName] = string(rawData)
+		backup.Annotations = map[string]string{utils.BackupVolumeSnapshotDeadlineAnnotationName: "10"}
+
+		exceeded, err := isDeadlineExceeded(backup)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(exceeded).To(BeTrue())
+	})
+})
+
+var _ = Describe("unmarshalMetadata", func() {
+	It("should unmarshal valid metadata correctly", func() {
+		rawData := `{"volumeSnapshotFirstFailure": 1234567890}`
+		data, err := unmarshalMetadata(rawData)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(data.VolumeSnapshotFirstDetectedFailure).To(Equal(int64(1234567890)))
+	})
+
+	It("should return an error if rawData is invalid JSON", func() {
+		rawData := `invalid-json`
+		data, err := unmarshalMetadata(rawData)
+		Expect(err).To(HaveOccurred())
+		Expect(data).To(BeNil())
+	})
+
+	It("should return an error if volumeSnapshotFirstFailure is missing", func() {
+		rawData := `{}`
+		data, err := unmarshalMetadata(rawData)
+		Expect(err).To(HaveOccurred())
+		Expect(data).To(BeNil())
+	})
+
+	It("should return an error if volumeSnapshotFirstFailure is zero", func() {
+		rawData := `{"volumeSnapshotFirstFailure": 0}`
+		data, err := unmarshalMetadata(rawData)
+		Expect(err).To(HaveOccurred())
+		Expect(data).To(BeNil())
 	})
 })

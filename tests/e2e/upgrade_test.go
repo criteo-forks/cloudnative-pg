@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -233,20 +236,20 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 					"Pod %v should have updated its config", pod.Name)
 			}
 			// Check that a switchover happened
-			Eventually(func() (bool, error) {
+			Eventually(func(g Gomega) bool {
 				c, err := clusterutils.Get(env.Ctx, env.Client, upgradeNamespace, clusterName)
-				Expect(err).ToNot(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 
 				GinkgoWriter.Printf("Current Primary: %s, Current Primary timestamp: %s\n",
 					c.Status.CurrentPrimary, c.Status.CurrentPrimaryTimestamp)
 
 				if c.Status.CurrentPrimary != oldPrimary {
-					return true, nil
+					return true
 				} else if c.Status.CurrentPrimaryTimestamp != oldPrimaryTimestamp {
-					return true, nil
+					return true
 				}
 
-				return false, nil
+				return false
 			}, timeout, "1s").Should(BeTrue())
 		})
 

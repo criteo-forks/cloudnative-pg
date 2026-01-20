@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1
@@ -82,13 +85,13 @@ func (r *Cluster) setDefaults(preserveUserSettings bool) {
 		r.Spec.Backup.Target = DefaultBackupTarget
 	}
 
-	psqlVersion, err := r.GetPostgresqlVersion()
+	psqlVersion, err := r.GetPostgresqlMajorVersion()
 	if err == nil {
 		// The validation error will be already raised by the
 		// validateImageName function
 		info := postgres.ConfigurationInfo{
 			Settings:                      postgres.CnpgConfigurationSettings,
-			Version:                       psqlVersion,
+			MajorVersion:                  psqlVersion,
 			UserSettings:                  r.Spec.PostgresConfiguration.Parameters,
 			IsReplicaCluster:              r.IsReplica(),
 			PreserveFixedSettingsFromUser: preserveUserSettings,
@@ -127,6 +130,11 @@ func (r *Cluster) setDefaults(preserveUserSettings bool) {
 
 	if len(r.Spec.Tablespaces) > 0 {
 		r.defaultTablespaces()
+	}
+
+	if r.Spec.PostgresConfiguration.Synchronous != nil &&
+		r.Spec.PostgresConfiguration.Synchronous.DataDurability == "" {
+		r.Spec.PostgresConfiguration.Synchronous.DataDurability = DataDurabilityLevelRequired
 	}
 
 	r.setDefaultPlugins(configuration.Current)
@@ -226,7 +234,11 @@ func (r *Cluster) defaultInitDB() {
 	}
 
 	if r.Spec.Bootstrap.InitDB.Database == "" {
-		r.Spec.Bootstrap.InitDB.Database = DefaultApplicationDatabaseName
+		// Set the default only if not executing a monolithic import
+		if r.Spec.Bootstrap.InitDB.Import == nil ||
+			r.Spec.Bootstrap.InitDB.Import.Type != MonolithSnapshotType {
+			r.Spec.Bootstrap.InitDB.Database = DefaultApplicationDatabaseName
+		}
 	}
 	if r.Spec.Bootstrap.InitDB.Owner == "" {
 		r.Spec.Bootstrap.InitDB.Owner = r.Spec.Bootstrap.InitDB.Database

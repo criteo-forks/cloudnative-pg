@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package forwardconnection
@@ -117,26 +120,26 @@ func NewDialer(
 }
 
 // StartAndWait begins the port-forwarding and waits until it's ready
-func (fc *ForwardConnection) StartAndWait() error {
-	var err error
+func (fc *ForwardConnection) StartAndWait(ctx context.Context) error {
+	errChan := make(chan error, 1)
 	go func() {
 		ginkgo.GinkgoWriter.Println("Starting port-forward")
-		err = fc.Forwarder.ForwardPorts()
-		if err != nil {
+		if err := fc.Forwarder.ForwardPorts(); err != nil {
 			ginkgo.GinkgoWriter.Printf("port-forward failed with error %s\n", err.Error())
-			return
+			errChan <- err
 		}
 	}()
-	if err != nil {
-		return fmt.Errorf("error starting port-forward: %w", err)
-	}
+
 	select {
 	case <-fc.readyChannel:
 		ginkgo.GinkgoWriter.Println("port-forward ready")
 		return nil
-	case <-fc.stopChannel:
-		ginkgo.GinkgoWriter.Println("port-forward closed")
+	case err := <-errChan:
+		ginkgo.GinkgoWriter.Println("port-forward failed before becoming ready")
 		return err
+	case <-ctx.Done():
+		close(fc.stopChannel)
+		return ctx.Err()
 	}
 }
 

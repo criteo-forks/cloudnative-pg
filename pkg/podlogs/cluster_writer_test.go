@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package podlogs
@@ -19,6 +22,7 @@ package podlogs
 import (
 	"bytes"
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,12 +155,18 @@ var _ = Describe("Cluster logging tests", func() {
 
 	It("should catch extra logs if given the follow option", func(ctx context.Context) {
 		client := fake.NewClientset(pod)
+
+		wg := sync.WaitGroup{}
+		wg.Add(1)
 		var logBuffer syncBuffer
+
 		// let's set a short follow-wait, and keep the cluster streaming for two
 		// cycles
-		followWaiting := 200 * time.Millisecond
+		followWaiting := 150 * time.Millisecond
 		ctx2, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		go func() {
+			// we always invoke done no matter what happens
+			defer wg.Done()
 			defer GinkgoRecover()
 			streamClusterLogs := ClusterWriter{
 				Cluster: cluster,
@@ -167,12 +177,16 @@ var _ = Describe("Cluster logging tests", func() {
 				Client:        client,
 			}
 			err := streamClusterLogs.SingleStream(ctx2, &logBuffer)
-			Expect(err).NotTo(HaveOccurred())
+			// we cannot reliably now if we will close the function before the context
+			// deadline, so we accept both nil and context.DeadlineExceeded
+			Expect(err).To(Or(BeNil(), Equal(context.DeadlineExceeded)))
 		}()
-		// give the stream call time to do a new search for pods
+
 		time.Sleep(350 * time.Millisecond)
 		cancel()
-		// the fake pod will be seen twice
-		Expect(logBuffer.String()).To(BeEquivalentTo("fake logs\nfake logs\n"))
+		wg.Wait()
+
+		fakeLogCount := strings.Count(logBuffer.String(), "fake logs\n")
+		Expect(fakeLogCount).To(BeNumerically(">=", 2))
 	})
 })

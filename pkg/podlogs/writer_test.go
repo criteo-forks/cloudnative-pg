@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package podlogs
@@ -246,6 +249,88 @@ fake logs
 "====== End of Previous Log ====="
 fake logs
 `))
+		})
+
+		It("ensures containerOpts with correct container name is passed to sendLogsToWriter", func(ctx context.Context) {
+			client := fake.NewClientset(&podWithSidecar)
+			streamPodLog := Writer{
+				Pod:    podWithSidecar,
+				Client: client,
+			}
+
+			namer := func(container string) string {
+				return fmt.Sprintf("%s-%s.log", streamPodLog.Pod.Name, container)
+			}
+			mw := newMultiWriter()
+
+			// This is a regression test for bug where opts was passed instead of containerOpts
+			// If container name isn't set correctly, the fake client might not behave as expected
+			// The test verifies that each container gets its own log file
+			err := streamPodLog.Multiple(ctx, &corev1.PodLogOptions{}, mw, namer)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(mw.writers).To(HaveLen(2))
+			Expect(mw.writers).To(HaveKey("pod-name-test-postgres.log"))
+			Expect(mw.writers).To(HaveKey("pod-name-test-sidecar.log"))
+		})
+	})
+
+	When("handling Previous logs edge cases", func() {
+		It("should fetch current logs even when Previous is true (regression test for #8985)", func(ctx context.Context) {
+			// This test verifies that when Previous: true is set, the function attempts
+			// to fetch both previous and current logs, not previous logs twice
+			client := fake.NewClientset(&pod)
+			streamPodLog := Writer{
+				Pod:    pod,
+				Client: client,
+			}
+
+			var logBuffer bytes.Buffer
+			err := streamPodLog.Single(ctx, &logBuffer, &corev1.PodLogOptions{
+				Previous: true,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// The output should contain the previous log markers and both log entries
+			output := logBuffer.String()
+			Expect(output).To(ContainSubstring("====== Beginning of Previous Log ====="))
+			Expect(output).To(ContainSubstring("====== End of Previous Log ====="))
+			// Should have logs from both previous and current (fake client returns "fake logs" for both)
+			Expect(output).To(ContainSubstring("fake logs"))
+		})
+
+		It("should handle Previous logs in Multiple with correct container options", func(ctx context.Context) {
+			// Regression test to ensure containerOpts is passed (not opts) in Multiple
+			// when Previous is enabled
+			client := fake.NewClientset(&podWithSidecar)
+			streamPodLog := Writer{
+				Pod:    podWithSidecar,
+				Client: client,
+			}
+
+			namer := func(container string) string {
+				return fmt.Sprintf("%s-%s.log", streamPodLog.Pod.Name, container)
+			}
+			mw := newMultiWriter()
+
+			err := streamPodLog.Multiple(ctx, &corev1.PodLogOptions{
+				Previous:   true,
+				Timestamps: true,
+			}, mw, namer)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Both containers should have their logs collected
+			Expect(mw.writers).To(HaveLen(2))
+
+			// Each should contain the previous log markers and actual logs
+			for containerName, writer := range mw.writers {
+				output := writer.String()
+				Expect(output).To(ContainSubstring("====== Beginning of Previous Log ====="),
+					"Container %s should have previous log marker", containerName)
+				Expect(output).To(ContainSubstring("====== End of Previous Log ====="),
+					"Container %s should have end marker", containerName)
+				Expect(output).To(ContainSubstring("fake logs"),
+					"Container %s should have actual logs", containerName)
+			}
 		})
 	})
 })

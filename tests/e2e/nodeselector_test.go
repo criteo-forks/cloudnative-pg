@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -76,10 +79,10 @@ var _ = Describe("nodeSelector", Label(tests.LabelPodScheduling), func() {
 			// We check the error to verify that's the case
 			By("verifying that the pods can't be scheduled", func() {
 				timeout := 120
-				Eventually(func() bool {
+				Eventually(func(g Gomega) {
 					isPending := false
 					podList, err := pods.List(env.Ctx, env.Client, namespace)
-					Expect(err).ToNot(HaveOccurred())
+					g.Expect(err).ToNot(HaveOccurred())
 					if len(podList.Items) > 0 {
 						if len(podList.Items[0].Status.Conditions) > 0 {
 							if podList.Items[0].Status.Phase == "Pending" && strings.Contains(podList.Items[0].Status.Conditions[0].Message,
@@ -93,8 +96,8 @@ var _ = Describe("nodeSelector", Label(tests.LabelPodScheduling), func() {
 							}
 						}
 					}
-					return isPending
-				}, timeout).Should(BeEquivalentTo(true))
+					g.Expect(isPending).To(BeTrue())
+				}, timeout).Should(Succeed())
 			})
 		})
 	})
@@ -123,7 +126,7 @@ var _ = Describe("nodeSelector", Label(tests.LabelPodScheduling), func() {
 				for _, nodeDetails := range nodeList.Items {
 					if (nodeDetails.Spec.Unschedulable != true) &&
 						(len(nodeDetails.Spec.Taints) == 0) {
-						nodeName = nodeDetails.ObjectMeta.Name
+						nodeName = nodeDetails.Name
 						break
 					}
 				}

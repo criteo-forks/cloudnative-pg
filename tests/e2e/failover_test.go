@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -120,13 +123,13 @@ var _ = Describe("Failover", Label(tests.LabelSelfHealing), func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// Expect the primary to have lost connection with the stopped standby
-			Eventually(func() (int, error) {
+			Eventually(func(g Gomega) {
 				primaryPod, err = podutils.Get(env.Ctx, env.Client, namespace, currentPrimary)
-				Expect(err).ToNot(HaveOccurred())
-				return postgres.CountReplicas(
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(postgres.CountReplicas(
 					env.Ctx, env.Client, env.Interface, env.RestClientConfig,
-					primaryPod, RetryTimeout)
-			}, RetryTimeout).Should(BeEquivalentTo(1))
+					primaryPod, RetryTimeout)).To(BeEquivalentTo(1))
+			}, RetryTimeout).Should(Succeed())
 		})
 
 		// Perform a CHECKPOINT on the primary and wait for the working standby
@@ -166,9 +169,9 @@ var _ = Describe("Failover", Label(tests.LabelSelfHealing), func() {
 				targetPrimary, strings.Trim(initialLSN, "\n"))
 			// The replay_lsn of the targetPrimary should be ahead
 			// of the one before the checkpoint
-			Eventually(func() (string, error) {
+			Eventually(func(g Gomega) {
 				primaryPod, err = podutils.Get(env.Ctx, env.Client, namespace, currentPrimary)
-				Expect(err).ToNot(HaveOccurred())
+				g.Expect(err).ToNot(HaveOccurred())
 				out, _, err := exec.EventuallyExecQueryInInstancePod(
 					env.Ctx, env.Client, env.Interface, env.RestClientConfig,
 					exec.PodLocator{
@@ -179,8 +182,9 @@ var _ = Describe("Failover", Label(tests.LabelSelfHealing), func() {
 					RetryTimeout,
 					PollingTime,
 				)
-				return strings.TrimSpace(out), err
-			}, RetryTimeout).Should(BeEquivalentTo("t"))
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(BeEquivalentTo("t"))
+			}, RetryTimeout).Should(Succeed())
 		})
 
 		// Force-delete the primary. Eventually the cluster should elect a
@@ -218,7 +222,7 @@ var _ = Describe("Failover", Label(tests.LabelSelfHealing), func() {
 				}, timeout).Should(Not(Equal("")))
 			}
 
-			By("making sure that the the targetPrimary has switched away from current primary")
+			By("making sure that the targetPrimary has switched away from current primary")
 			// The operator should eventually set the cluster target primary to
 			// the instance we expect to take that role (-3).
 			Eventually(func() (string, error) {

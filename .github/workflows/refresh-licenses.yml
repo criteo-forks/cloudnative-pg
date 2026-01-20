@@ -1,0 +1,44 @@
+# Refresh the "licenses" directory and create a PR if there are any changes
+
+name: Refresh licenses directory
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 0 * * 1"
+
+permissions: read-all
+
+env:
+  # renovate: datasource=golang-version depName=golang versioning=loose
+  GOLANG_VERSION: "1.25.5"
+
+jobs:
+  licenses:
+    name: Refresh licenses
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+
+      - name: Install Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
+        with:
+          go-version: ${{ env.GOLANG_VERSION }}
+          check-latest: true
+
+      - name: Generate licenses
+        run: |
+          make licenses
+
+      - name: Create Pull Request if licenses have been updated
+        uses: peter-evans/create-pull-request@84ae59a2cdc2258d6fa0732dd66352dddae2a412 # v7
+        with:
+          token: ${{ secrets.REPO_GHA_PAT }}
+          title: "chore: refresh licenses directory"
+          body: "Refresh the licenses directory"
+          branch: "license-updater"
+          author: "license-updater <license-updater@users.noreply.github.com>"
+          add-paths: |
+            licenses/**
+          commit-message: "chore: refresh licenses directory"
+          signoff: true

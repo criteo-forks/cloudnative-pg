@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package executablehash detect the SHA256 of the running binary
@@ -22,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -30,10 +34,9 @@ var (
 	mx                sync.Mutex
 )
 
-// Stream opens a stream reading from the executable of the current binary
+// Stream opens a stream reading from the executable of the current process binary (os.Args[0] after path cleaning).
 func Stream() (io.ReadCloser, error) {
-	processBinaryFileName := os.Args[0]
-	return os.Open(processBinaryFileName) // #nosec
+	return os.Open(filepath.Clean(os.Args[0]))
 }
 
 // StreamByName opens a stream reading from an executable given its name

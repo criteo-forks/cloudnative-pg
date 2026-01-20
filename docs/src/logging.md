@@ -1,4 +1,11 @@
+---
+id: logging
+sidebar_position: 310
+title: Logging
+---
+
 # Logging
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 CloudNativePG outputs logs in JSON format directly to standard output, including
 PostgreSQL logs, without persisting them to storage for security reasons. This

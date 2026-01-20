@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package walrestore implement the walrestore command
@@ -22,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"strings"
 	"time"
 
@@ -35,7 +37,6 @@ import (
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	pluginClient "github.com/cloudnative-pg/cloudnative-pg/internal/cnpi/plugin/client"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cnpi/plugin/repository"
-	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/cache"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver/client/local"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
@@ -70,6 +71,8 @@ func NewCmd() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(2),
 		RunE: func(cobraCmd *cobra.Command, args []string) error {
+			// TODO: The command is triggered by PG, resulting in the loss of stdout logs.
+			// TODO: We need to implement a logpipe to prevent this.
 			contextLog := log.WithName("wal-restore")
 			ctx := log.IntoContext(cobraCmd.Context(), contextLog)
 			err := run(ctx, pgData, podName, args)
@@ -119,11 +122,21 @@ func run(ctx context.Context, pgData string, podName string, args []string) erro
 		return fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	walFound, err := restoreWALViaPlugins(ctx, cluster, walName, path.Join(pgData, destinationPath))
+	walFound, err := restoreWALViaPlugins(ctx, cluster, walName, pgData, destinationPath)
 	if err != nil {
-		return err
+		// With the current implementation, this happens when both of the following conditions are met:
+		//
+		// 1. At least one CNPG-i plugin that implements the WAL service is present.
+		// 2. No plugin can restore the WAL file because:
+		//   a) The requested WAL could not be found
+		//   b) The plugin failed in the restoration process.
+		//
+		// When this happens, `walFound` is false, prompting us to revert to the in-tree barman-cloud support.
+		contextLog.Trace("could not restore WAL via plugins", "wal", walName, "error", err)
 	}
 	if walFound {
+		// This happens only if a CNPG-i plugin was able to restore
+		// the requested WAL.
 		return nil
 	}
 
@@ -248,18 +261,13 @@ func restoreWALViaPlugins(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
 	walName string,
+	pgData string,
 	destinationPathName string,
 ) (bool, error) {
 	contextLogger := log.FromContext(ctx)
 
 	plugins := repository.New()
-	availablePluginNames, err := plugins.RegisterUnixSocketPluginsInPath(configuration.Current.PluginSocketDir)
-	if err != nil {
-		contextLogger.Error(err, "Error while loading local plugins")
-	}
 	defer plugins.Close()
-
-	availablePluginNamesSet := stringset.From(availablePluginNames)
 
 	enabledPluginNames := apiv1.GetPluginConfigurationEnabledPluginNames(cluster.Spec.Plugins)
 	enabledPluginNames = append(
@@ -267,19 +275,14 @@ func restoreWALViaPlugins(
 		apiv1.GetExternalClustersEnabledPluginNames(cluster.Spec.ExternalClusters)...,
 	)
 	enabledPluginNamesSet := stringset.From(enabledPluginNames)
-
-	client, err := pluginClient.WithPlugins(
-		ctx,
-		plugins,
-		availablePluginNamesSet.Intersect(enabledPluginNamesSet).ToList()...,
-	)
+	client, err := pluginClient.NewClient(ctx, enabledPluginNamesSet)
 	if err != nil {
 		contextLogger.Error(err, "Error while loading required plugins")
 		return false, err
 	}
 	defer client.Close(ctx)
 
-	return client.RestoreWAL(ctx, cluster, walName, destinationPathName)
+	return client.RestoreWAL(ctx, cluster, walName, postgres.BuildWALPath(pgData, destinationPathName))
 }
 
 // checkEndOfWALStreamFlag returns ErrEndOfWALStreamReached if the flag is set in the restorer
@@ -350,9 +353,9 @@ func GetRecoverConfiguration(
 			return "", nil, nil, ErrNoBackupConfigured
 		}
 		configuration := externalCluster.BarmanObjectStore
-		if configuration.EndpointCA != nil && configuration.BarmanCredentials.AWS != nil {
+		if configuration.EndpointCA != nil && configuration.AWS != nil {
 			env = append(env, fmt.Sprintf("AWS_CA_BUNDLE=%s", postgres.BarmanRestoreEndpointCACertificateLocation))
-		} else if configuration.EndpointCA != nil && configuration.BarmanCredentials.Azure != nil {
+		} else if configuration.EndpointCA != nil && configuration.Azure != nil {
 			env = append(env, fmt.Sprintf("REQUESTS_CA_BUNDLE=%s", postgres.BarmanRestoreEndpointCACertificateLocation))
 		}
 		return externalCluster.Name, env, externalCluster.BarmanObjectStore, nil
@@ -362,9 +365,9 @@ func GetRecoverConfiguration(
 	// back up this cluster
 	if cluster.Spec.Backup != nil && cluster.Spec.Backup.BarmanObjectStore != nil {
 		configuration := cluster.Spec.Backup.BarmanObjectStore
-		if configuration.EndpointCA != nil && configuration.BarmanCredentials.AWS != nil {
+		if configuration.EndpointCA != nil && configuration.AWS != nil {
 			env = append(env, fmt.Sprintf("AWS_CA_BUNDLE=%s", postgres.BarmanBackupEndpointCACertificateLocation))
-		} else if configuration.EndpointCA != nil && configuration.BarmanCredentials.Azure != nil {
+		} else if configuration.EndpointCA != nil && configuration.Azure != nil {
 			env = append(env, fmt.Sprintf("REQUESTS_CA_BUNDLE=%s", postgres.BarmanBackupEndpointCACertificateLocation))
 		}
 		return cluster.Name, env, cluster.Spec.Backup.BarmanObjectStore, nil
@@ -403,7 +406,14 @@ func isStreamingAvailable(cluster *apiv1.Cluster, podName string) bool {
 		return false
 	}
 
-	// Easy case: If this pod is a replica, the streaming is always available
+	// Easy case take 1: we are helping PostgreSQL to create the first
+	// instance of a Cluster. No streaming connection is possible.
+	if cluster.Status.CurrentPrimary == "" {
+		return false
+	}
+
+	// Easy case take 2: If this pod is a replica, the streaming is always
+	// available
 	if cluster.Status.CurrentPrimary != podName {
 		return true
 	}

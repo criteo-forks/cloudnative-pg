@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -97,16 +100,14 @@ var _ = Describe("MinIO - Backup and restore", Label(tests.LabelBackupRestore), 
 			// Create the cluster
 			AssertCreateCluster(namespace, clusterName, clusterWithMinioSampleFile, env)
 
-			By("verify test connectivity to minio using barman-cloud-wal-archive script", func() {
+			By("verify connectivity of barman to minio", func() {
 				primaryPod, err := clusterutils.GetPrimary(env.Ctx, env.Client, namespace, clusterName)
 				Expect(err).ToNot(HaveOccurred())
 				Eventually(func() (bool, error) {
-					connectionStatus, err := minio.TestConnectivityUsingBarmanCloudWalArchive(
-						namespace, clusterName, primaryPod.GetName(), "minio", "minio123", minioEnv.ServiceName)
-					if err != nil {
-						return false, err
-					}
-					return connectionStatus, nil
+					connectionStatus, err := minio.TestBarmanConnectivity(
+						namespace, clusterName, primaryPod.Name,
+						"minio", "minio123", minioEnv.ServiceName)
+					return connectionStatus, err
 				}, 60).Should(BeTrue())
 			})
 		})
@@ -157,21 +158,21 @@ var _ = Describe("MinIO - Backup and restore", Label(tests.LabelBackupRestore), 
 						if err != nil {
 							return "", err
 						}
-						return cluster.Status.FirstRecoverabilityPoint, err
+						return cluster.Status.FirstRecoverabilityPoint, err //nolint:staticcheck
 					}, 30).ShouldNot(BeEmpty())
 					Eventually(func() (string, error) {
 						cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
 						if err != nil {
 							return "", err
 						}
-						return cluster.Status.LastSuccessfulBackup, err
+						return cluster.Status.LastSuccessfulBackup, err //nolint:staticcheck
 					}, 30).ShouldNot(BeEmpty())
 					Eventually(func() (string, error) {
 						cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
 						if err != nil {
 							return "", err
 						}
-						return cluster.Status.LastFailedBackup, err
+						return cluster.Status.LastFailedBackup, err //nolint:staticcheck
 					}, 30).Should(BeEmpty())
 				})
 
@@ -318,7 +319,7 @@ var _ = Describe("MinIO - Backup and restore", Label(tests.LabelBackupRestore), 
 				}, 60).Should(BeEquivalentTo(1))
 				Eventually(func() (string, error) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, targetClusterName)
-					return cluster.Status.FirstRecoverabilityPoint, err
+					return cluster.Status.FirstRecoverabilityPoint, err //nolint:staticcheck
 				}, 30).ShouldNot(BeEmpty())
 			})
 		})
@@ -372,7 +373,7 @@ var _ = Describe("MinIO - Backup and restore", Label(tests.LabelBackupRestore), 
 				}, 60).Should(BeEquivalentTo(1))
 				Eventually(func() (string, error) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, targetClusterName)
-					return cluster.Status.FirstRecoverabilityPoint, err
+					return cluster.Status.FirstRecoverabilityPoint, err //nolint:staticcheck
 				}, 30).ShouldNot(BeEmpty())
 			})
 
@@ -436,7 +437,7 @@ var _ = Describe("MinIO - Backup and restore", Label(tests.LabelBackupRestore), 
 				// this is the second backup we take on the bucket
 				Eventually(func() (string, error) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, customClusterName)
-					return cluster.Status.FirstRecoverabilityPoint, err
+					return cluster.Status.FirstRecoverabilityPoint, err //nolint:staticcheck
 				}, 30).ShouldNot(BeEmpty())
 			})
 
@@ -606,16 +607,14 @@ var _ = Describe("MinIO - Clusters Recovery from Barman Object Store", Label(tes
 			// Create the cluster
 			AssertCreateCluster(namespace, clusterName, clusterSourceFileMinio, env)
 
-			By("verify test connectivity to minio using barman-cloud-wal-archive script", func() {
+			By("verify connectivity of barman to minio", func() {
 				primaryPod, err := clusterutils.GetPrimary(env.Ctx, env.Client, namespace, clusterName)
 				Expect(err).ToNot(HaveOccurred())
 				Eventually(func() (bool, error) {
-					connectionStatus, err := minio.TestConnectivityUsingBarmanCloudWalArchive(
-						namespace, clusterName, primaryPod.GetName(), "minio", "minio123", minioEnv.ServiceName)
-					if err != nil {
-						return false, err
-					}
-					return connectionStatus, nil
+					connectionStatus, err := minio.TestBarmanConnectivity(
+						namespace, clusterName, primaryPod.Name,
+						"minio", "minio123", minioEnv.ServiceName)
+					return connectionStatus, err
 				}, 60).Should(BeTrue())
 			})
 		})
@@ -657,7 +656,7 @@ var _ = Describe("MinIO - Clusters Recovery from Barman Object Store", Label(tes
 						if err != nil {
 							return "", err
 						}
-						return cluster.Status.FirstRecoverabilityPoint, err
+						return cluster.Status.FirstRecoverabilityPoint, err //nolint:staticcheck
 					}, 30).ShouldNot(BeEmpty())
 				})
 
@@ -800,11 +799,11 @@ func prepareClusterForPITROnMinio(
 		}, 60).Should(BeNumerically(">=", expectedVal),
 			fmt.Sprintf("verify the number of backups %v is greater than or equal to %v", latestTar,
 				expectedVal))
-		Eventually(func() (string, error) {
+		Eventually(func(g Gomega) {
 			cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-			Expect(err).ToNot(HaveOccurred())
-			return cluster.Status.FirstRecoverabilityPoint, err
-		}, 30).ShouldNot(BeEmpty())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(cluster.Status.FirstRecoverabilityPoint).ToNot(BeEmpty()) //nolint:staticcheck
+		}, 30).Should(Succeed())
 	})
 
 	// Write a table and insert 2 entries on the "app" database

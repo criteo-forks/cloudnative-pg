@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package postgres
@@ -30,6 +33,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/blang/semver"
@@ -209,8 +214,30 @@ type Instance struct {
 	// MetricsPortTLS enables TLS on the port used to publish metrics over HTTP/HTTPS
 	MetricsPortTLS bool
 
+	serverCertificateHandler serverCertificateHandler
+}
+
+type serverCertificateHandler struct {
+	operationInProgress sync.Mutex
+
 	// ServerCertificate is the certificate we use to serve https connections
 	ServerCertificate *tls.Certificate
+}
+
+// GetServerCertificate returns the server certificate for the instance
+func (instance *Instance) GetServerCertificate() *tls.Certificate {
+	instance.serverCertificateHandler.operationInProgress.Lock()
+	defer instance.serverCertificateHandler.operationInProgress.Unlock()
+
+	return instance.serverCertificateHandler.ServerCertificate
+}
+
+// SetServerCertificate sets the server certificate for the instance
+func (instance *Instance) SetServerCertificate(cert *tls.Certificate) {
+	instance.serverCertificateHandler.operationInProgress.Lock()
+	defer instance.serverCertificateHandler.operationInProgress.Unlock()
+
+	instance.serverCertificateHandler.ServerCertificate = cert
 }
 
 // SetPostgreSQLAutoConfWritable allows or deny writes to the
@@ -267,16 +294,9 @@ func (instance *Instance) CheckHasDiskSpaceForWAL(ctx context.Context) (bool, er
 	}
 
 	pgControlData := utils.ParsePgControldataOutput(pgControlDataString)
-	walSegmentSizeString, ok := pgControlData["Bytes per WAL segment"]
-	if !ok {
-		return false, fmt.Errorf("no 'Bytes per WAL segment' section into pg_controldata output")
-	}
-
-	walSegmentSize, err := strconv.Atoi(walSegmentSizeString)
+	walSegmentSize, err := pgControlData.GetBytesPerWALSegment()
 	if err != nil {
-		return false, fmt.Errorf(
-			"wrong 'Bytes per WAL segment' pg_controldata value (not an integer): '%s' %w",
-			walSegmentSizeString, err)
+		return false, err
 	}
 
 	walDirectory := path.Join(instance.PgData, pgWalDirectory)
@@ -459,7 +479,7 @@ func (instance *Instance) Startup() error {
 	}
 
 	pgCtlCmd := exec.Command(pgCtlName, options...) // #nosec
-	pgCtlCmd.Env = instance.Env
+	pgCtlCmd.Env = instance.buildPostgresEnv()
 	err := execlog.RunStreaming(pgCtlCmd, pgCtlName)
 	if err != nil {
 		return fmt.Errorf("error starting PostgreSQL instance: %w", err)
@@ -478,18 +498,19 @@ func (instance *Instance) ShutdownConnections() {
 	}
 }
 
-// Shutdown shuts down a PostgreSQL instance which was previously started
-// with Startup.
-// This function will return an error whether PostgreSQL is still up
-// after the shutdown request.
+// Shutdown stops a PostgreSQL instance that was previously started with Startup.
+// Before shutting down, it attempts to execute a CHECKPOINT.
+// The function returns an error if PostgreSQL remains running after the shutdown request.
 func (instance *Instance) Shutdown(ctx context.Context, options shutdownOptions) error {
 	contextLogger := log.FromContext(ctx)
-	instance.ShutdownConnections()
 
 	// check instance status
 	if !instance.isStatusRunning() {
 		return fmt.Errorf("instance is not running")
 	}
+
+	instance.tryCheckpointBeforeShutdown(ctx, options.Mode)
+	instance.ShutdownConnections()
 
 	pgCtlOptions := []string{
 		"-D",
@@ -525,9 +546,9 @@ func (instance *Instance) Shutdown(ctx context.Context, options shutdownOptions)
 	return nil
 }
 
-// TryShuttingDownSmartFast first tries to shut down the instance with mode smart,
-// then in case of failure or the given timeout expiration,
-// it will issue a fast shutdown request and wait for it to complete.
+// TryShuttingDownSmartFast first attempts to shut down the instance using the "smart" mode,
+// which is preceded by a CHECKPOINT. If this fails or the specified timeout expires,
+// it issues an "fast" shutdown request and waits for completion.
 func (instance *Instance) TryShuttingDownSmartFast(ctx context.Context) error {
 	contextLogger := log.FromContext(ctx)
 
@@ -575,10 +596,10 @@ func (instance *Instance) TryShuttingDownSmartFast(ctx context.Context) error {
 	return nil
 }
 
-// TryShuttingDownFastImmediate first tries to shut down the instance with mode fast,
-// then in case of failure or the given timeout expiration,
-// it will issue an immediate shutdown request and wait for it to complete.
-// N.B. immediate shutdown can cause data loss.
+// TryShuttingDownFastImmediate first attempts to shut down the instance using the "fast" mode,
+// which is preceded by a CHECKPOINT. If this fails or the specified timeout expires,
+// it issues an "immediate" shutdown request and waits for completion.
+// Note: an immediate shutdown may lead to data loss.
 func (instance *Instance) TryShuttingDownFastImmediate(ctx context.Context) error {
 	contextLogger := log.FromContext(ctx)
 
@@ -684,7 +705,7 @@ func (instance *Instance) Run() (*execlog.StreamingCmd, error) {
 	}
 
 	postgresCmd := exec.Command(postgresName, options...) // #nosec
-	postgresCmd.Env = instance.Env
+	postgresCmd.Env = instance.buildPostgresEnv()
 	compatibility.AddInstanceRunCommands(postgresCmd)
 
 	streamingCmd, err := execlog.RunStreamingNoWait(postgresCmd, postgresName)
@@ -693,6 +714,18 @@ func (instance *Instance) Run() (*execlog.StreamingCmd, error) {
 	}
 
 	return streamingCmd, nil
+}
+
+func (instance *Instance) buildPostgresEnv() []string {
+	env := instance.Env
+	if env == nil {
+		env = os.Environ()
+	}
+	env = append(env,
+		"PG_OOM_ADJUST_FILE=/proc/self/oom_score_adj",
+		"PG_OOM_ADJUST_VALUE=0",
+	)
+	return env
 }
 
 // WithActiveInstance execute the internal function while this
@@ -758,7 +791,7 @@ func (instance *Instance) GetPgVersion() (semver.Version, error) {
 }
 
 // ConnectionPool gets or initializes the connection pool for this instance
-func (instance *Instance) ConnectionPool() *pool.ConnectionPool {
+func (instance *Instance) ConnectionPool() pool.Pooler {
 	const applicationName = "cnpg-instance-manager"
 	if instance.pool == nil {
 		socketDir := GetSocketDir()
@@ -821,7 +854,7 @@ func (instance *Instance) Demote(ctx context.Context, cluster *apiv1.Cluster) er
 
 // WaitForPrimaryAvailable waits until we can connect to the primary
 func (instance *Instance) WaitForPrimaryAvailable(ctx context.Context) error {
-	primaryConnInfo := instance.GetPrimaryConnInfo() + " dbname=postgres connect_timeout=5"
+	primaryConnInfo := instance.GetPrimaryConnInfo() + " connect_timeout=5"
 
 	log.Info("Waiting for the new primary to be available",
 		"primaryConnInfo", primaryConnInfo)
@@ -1007,7 +1040,7 @@ func (instance *Instance) removePgControlFileBackup() error {
 
 // Rewind uses pg_rewind to align this data directory with the contents of the primary node.
 // If postgres major version is >= 13, add "--restore-target-wal" option
-func (instance *Instance) Rewind(ctx context.Context, postgresVersion semver.Version) error {
+func (instance *Instance) Rewind(ctx context.Context) error {
 	contextLogger := log.FromContext(ctx)
 
 	// Signal the liveness probe that we are running pg_rewind before starting postgres
@@ -1021,20 +1054,16 @@ func (instance *Instance) Rewind(ctx context.Context, postgresVersion semver.Ver
 	primaryConnInfo := instance.GetPrimaryConnInfo()
 	options := []string{
 		"-P",
-		"--source-server", primaryConnInfo + " dbname=postgres",
+		"--source-server", primaryConnInfo,
 		"--target-pgdata", instance.PgData,
 	}
 
-	// As PostgreSQL 13 introduces support of restore from the WAL archive in pg_rewind,
-	// let’s automatically use it, if possible
-	if postgresVersion.Major >= 13 {
-		// make sure restore_command is set in override.conf
-		if _, err := configurePostgresOverrideConfFile(instance.PgData, primaryConnInfo, ""); err != nil {
-			return err
-		}
-
-		options = append(options, "--restore-target-wal")
+	// make sure restore_command is set in override.conf
+	if _, err := configurePostgresOverrideConfFile(instance.PgData, primaryConnInfo, ""); err != nil {
+		return err
 	}
+
+	options = append(options, "--restore-target-wal")
 
 	// Make sure PostgreSQL control file is not empty
 	err := instance.managePgControlFileBackup()
@@ -1047,7 +1076,7 @@ func (instance *Instance) Rewind(ctx context.Context, postgresVersion semver.Ver
 		"options", options)
 
 	pgRewindCmd := exec.Command(pgRewindName, options...) // #nosec
-	pgRewindCmd.Env = instance.Env
+	pgRewindCmd.Env = instance.buildPostgresEnv()
 	err = execlog.RunStreaming(pgRewindCmd, pgRewindName)
 	if err != nil {
 		contextLogger.Error(err, "Failed to execute pg_rewind", "options", options)
@@ -1284,7 +1313,15 @@ func (instance *Instance) DropConnections() error {
 
 // GetPrimaryConnInfo returns the DSN to reach the primary
 func (instance *Instance) GetPrimaryConnInfo() string {
-	return buildPrimaryConnInfo(instance.GetClusterName()+"-rw", instance.GetPodName())
+	result := buildPrimaryConnInfo(instance.GetClusterName()+"-rw", instance.GetPodName()) + " dbname=postgres"
+
+	standbyTCPUserTimeout := os.Getenv("CNPG_STANDBY_TCP_USER_TIMEOUT")
+	if len(standbyTCPUserTimeout) > 0 {
+		result = fmt.Sprintf("%s tcp_user_timeout='%s'", result,
+			strings.ReplaceAll(strings.ReplaceAll(standbyTCPUserTimeout, `\`, `\\`), `'`, `\'`))
+	}
+
+	return result
 }
 
 // HandleInstanceCommandRequests execute a command requested by the reconciliation
@@ -1324,4 +1361,44 @@ func (instance *Instance) HandleInstanceCommandRequests(
 	default:
 		return false, fmt.Errorf("unrecognized request: %s", req)
 	}
+}
+
+// tryCheckpointBeforeShutdown attempts to issue a checkpoint before shutdown.
+// This is skipped if the instance is not a primary or if an immediate shutdown is requested.
+// This reduces shutdown time and subsequent promotion time for replicas, especially for systems with high
+// checkpoint_timeout.
+// All outcomes (success, failure, or skipped) are logged appropriately.
+func (instance *Instance) tryCheckpointBeforeShutdown(ctx context.Context, mode shutdownMode) {
+	contextLogger := log.FromContext(ctx).WithName("checkpoint_before_shutdown")
+	contextLogger.Info("Attempting checkpoint before shutdown")
+
+	if mode == shutdownModeImmediate {
+		contextLogger.Info("Skipping checkpoint: immediate shutdown requested")
+		return
+	}
+
+	isPrimary, err := instance.IsPrimary()
+	if err != nil {
+		contextLogger.Error(err, "Failed to determine instance role, skipping checkpoint")
+		return
+	}
+
+	if !isPrimary {
+		contextLogger.Info("Skipping checkpoint: instance is not primary")
+		return
+	}
+
+	db, err := instance.GetSuperUserDB()
+	if err != nil {
+		contextLogger.Error(err, "Failed to get superuser DB connection, skipping checkpoint")
+		return
+	}
+
+	contextLogger.Info("Executing CHECKPOINT command before shutdown")
+	if _, err = db.ExecContext(ctx, "CHECKPOINT"); err != nil {
+		contextLogger.Error(err, "Failed to execute CHECKPOINT command")
+		return
+	}
+
+	contextLogger.Info("Checkpoint completed successfully")
 }

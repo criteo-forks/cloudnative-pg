@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -20,7 +23,9 @@ import (
 	"fmt"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 
@@ -28,6 +33,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/tests"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/clusterutils"
+	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/deployments"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/exec"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/run"
@@ -109,24 +115,15 @@ func assertFastSwitchover(namespace, sampleFile, clusterName, webTestFile, webTe
 	// Node 1 should be the primary, so the -rw service should
 	// point there. We verify this.
 	By("having the current primary on node1", func() {
-		endpointName := clusterName + "-rw"
-		endpoint := &corev1.Endpoints{}
-		endpointNamespacedName := types.NamespacedName{
-			Namespace: namespace,
-			Name:      endpointName,
-		}
+		rwServiceName := clusterName + "-rw"
+		endpointSlice, err := utils.GetEndpointSliceByServiceName(env.Ctx, env.Client, namespace, rwServiceName)
+		Expect(err).ToNot(HaveOccurred())
+
 		oldPrimary = clusterName + "-1"
 		pod := &corev1.Pod{}
-		podNamespacedName := types.NamespacedName{
-			Namespace: namespace,
-			Name:      oldPrimary,
-		}
-		err := env.Client.Get(env.Ctx, endpointNamespacedName,
-			endpoint)
+		err = env.Client.Get(env.Ctx, types.NamespacedName{Namespace: namespace, Name: oldPrimary}, pod)
 		Expect(err).ToNot(HaveOccurred())
-		err = env.Client.Get(env.Ctx, podNamespacedName, pod)
-		Expect(utils.FirstEndpointIP(endpoint), err).To(
-			BeEquivalentTo(pod.Status.PodIP))
+		Expect(utils.FirstEndpointSliceIP(endpointSlice)).To(BeEquivalentTo(pod.Status.PodIP))
 	})
 	By("preparing the db for the test scenario", func() {
 		// Create the table used by the scenario
@@ -156,6 +153,10 @@ func assertFastSwitchover(namespace, sampleFile, clusterName, webTestFile, webTe
 		_, _, err := run.Run("kubectl create -n " + namespace +
 			" -f " + webTestFile)
 		Expect(err).ToNot(HaveOccurred())
+
+		webtestDeploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "webtest", Namespace: namespace}}
+		Expect(deployments.WaitForReady(env.Ctx, env.Client, webtestDeploy, 60)).To(Succeed())
+
 		_, _, err = run.Run("kubectl create -n " + namespace +
 			" -f " + webTestJob)
 		Expect(err).ToNot(HaveOccurred())
@@ -196,16 +197,6 @@ func assertFastSwitchover(namespace, sampleFile, clusterName, webTestFile, webTe
 
 	var maxReattachTime int32 = 60
 	var maxSwitchoverTime int32 = 20
-
-	// The walreceiver of a standby that wasn't promoted may try to reconnect
-	// before the rw service endpoints are updated. In this case, the walreceiver
-	// can be stuck for waiting for the connection to be established for a time that
-	// depends on the tcp_syn_retries sysctl. Since by default
-	// net.ipv4.tcp_syn_retries=6, PostgreSQL can wait 2^7-1=127 seconds before
-	// restarting the walreceiver.
-	if !IsLocal() {
-		maxReattachTime = 180
-	}
 
 	AssertStandbysFollowPromotion(namespace, clusterName, maxReattachTime)
 

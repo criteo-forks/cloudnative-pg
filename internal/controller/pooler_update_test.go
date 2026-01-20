@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package controller
@@ -297,7 +300,7 @@ var _ = Describe("unit test of pooler_update reconciliation logic", func() {
 		pooler := newFakePooler(env.client, cluster)
 		res := &poolerManagedResources{Deployment: nil, Cluster: cluster}
 		By("setting the reconcilePodSpec annotation to disabled on the pooler ", func() {
-			pooler.ObjectMeta.Annotations[utils.ReconcilePodSpecAnnotationName] = "disabled"
+			pooler.Annotations[utils.ReconcilePodSpecAnnotationName] = "disabled"
 			pooler.Spec.Template = &apiv1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					TerminationGracePeriodSeconds: ptr.To(int64(100)),
@@ -344,7 +347,7 @@ var _ = Describe("unit test of pooler_update reconciliation logic", func() {
 		})
 
 		By("enable again, making sure pooler change updates the deployment", func() {
-			delete(pooler.ObjectMeta.Annotations, utils.ReconcilePodSpecAnnotationName)
+			delete(pooler.Annotations, utils.ReconcilePodSpecAnnotationName)
 			beforeDep := getPoolerDeployment(ctx, env.client, pooler)
 			pooler.Spec.Template.Spec.TerminationGracePeriodSeconds = ptr.To(int64(300))
 			err := env.poolerReconciler.updateDeployment(ctx, pooler, res)

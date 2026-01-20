@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1
@@ -19,9 +22,9 @@ package v1
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +42,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/system"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
+	contextutils "github.com/cloudnative-pg/cloudnative-pg/pkg/utils/context"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
 
@@ -126,8 +130,8 @@ func (st *ServiceAccountTemplate) MergeMetadata(sa *corev1.ServiceAccount) {
 		sa.Annotations = map[string]string{}
 	}
 
-	utils.MergeMap(sa.Labels, st.Metadata.Labels)
-	utils.MergeMap(sa.Annotations, st.Metadata.Annotations)
+	maps.Copy(sa.Labels, st.Metadata.Labels)
+	maps.Copy(sa.Annotations, st.Metadata.Annotations)
 }
 
 // MatchesTopology checks if the two topologies have
@@ -151,27 +155,47 @@ func (status *ClusterStatus) GetAvailableArchitecture(archName string) *Availabl
 	return nil
 }
 
-func (r *SynchronizeReplicasConfiguration) compileRegex() []error {
-	if r == nil {
-		return nil
+type regexErrors struct {
+	errs []error
+}
+
+func (r regexErrors) Error() string {
+	if len(r.errs) == 0 {
+		return ""
 	}
-	if r.compiled {
-		return r.compileErrors
+	var sb strings.Builder
+	sb.WriteString("failed to compile regex patterns: ")
+	for _, err := range r.errs {
+		sb.WriteString(err.Error())
+		sb.WriteString("; ")
+	}
+	return sb.String()
+}
+
+func (r *SynchronizeReplicasConfiguration) compileRegex() ([]regexp.Regexp, error) {
+	if r == nil {
+		return nil, nil
 	}
 
-	var errs []error
-	for _, pattern := range r.ExcludePatterns {
+	var (
+		compiledPatterns = make([]regexp.Regexp, len(r.ExcludePatterns))
+		compileErrors    []error
+	)
+
+	for idx, pattern := range r.ExcludePatterns {
 		re, err := regexp.Compile(pattern)
 		if err != nil {
-			errs = append(errs, err)
+			compileErrors = append(compileErrors, err)
 			continue
 		}
-		r.compiledPatterns = append(r.compiledPatterns, *re)
+		compiledPatterns[idx] = *re
 	}
 
-	r.compiled = true
-	r.compileErrors = errs
-	return errs
+	if len(compileErrors) > 0 {
+		return nil, regexErrors{errs: compileErrors}
+	}
+
+	return compiledPatterns, nil
 }
 
 // GetEnabled returns false if synchronized replication slots are disabled, defaults to true
@@ -183,8 +207,9 @@ func (r *SynchronizeReplicasConfiguration) GetEnabled() bool {
 }
 
 // ValidateRegex returns all the errors that happened during the regex compilation
-func (r *SynchronizeReplicasConfiguration) ValidateRegex() []error {
-	return r.compileRegex()
+func (r *SynchronizeReplicasConfiguration) ValidateRegex() error {
+	_, err := r.compileRegex()
+	return err
 }
 
 // IsExcludedByUser returns if a replication slot should not be reconciled on the replicas
@@ -193,12 +218,13 @@ func (r *SynchronizeReplicasConfiguration) IsExcludedByUser(slotName string) (bo
 		return false, nil
 	}
 
+	compiledPatterns, err := r.compileRegex()
 	// this is an unexpected issue, validation should happen at webhook level
-	if errs := r.compileRegex(); len(errs) > 0 {
-		return false, errs[0]
+	if err != nil {
+		return false, err
 	}
 
-	for _, re := range r.compiledPatterns {
+	for _, re := range compiledPatterns {
 		if re.MatchString(slotName) {
 			return true, nil
 		}
@@ -388,43 +414,30 @@ func (secretResourceVersion *SecretsResourceVersion) SetExternalClusterSecretVer
 
 // SetInContext records the cluster in the given context
 func (cluster *Cluster) SetInContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, utils.ContextKeyCluster, cluster)
+	return context.WithValue(ctx, contextutils.ContextKeyCluster, cluster)
 }
 
-// GetImageName get the name of the image that should be used
-// to create the pods
-func (cluster *Cluster) GetImageName() string {
-	// If the image is specified in the status, use that one
-	// It should be there since the first reconciliation
-	if len(cluster.Status.Image) > 0 {
-		return cluster.Status.Image
-	}
-
-	// Fallback to the information we have in the spec
-	if len(cluster.Spec.ImageName) > 0 {
-		return cluster.Spec.ImageName
-	}
-
-	// TODO: check: does a scenario exists in which we do have an imageCatalog
-	//   and no status.image? In that case this should probably error out, not
-	//   returning the default image name.
-	return configuration.Current.PostgresImageName
-}
-
-// GetPostgresqlVersion gets the PostgreSQL image version detecting it from the
+// GetPostgresqlMajorVersion gets the PostgreSQL image major version detecting it from the
 // image name or from the ImageCatalogRef.
-// Example:
-//
-// ghcr.io/cloudnative-pg/postgresql:14.0 corresponds to version (14,0)
-// ghcr.io/cloudnative-pg/postgresql:13.2 corresponds to version (13,2)
-func (cluster *Cluster) GetPostgresqlVersion() (version.Data, error) {
+func (cluster *Cluster) GetPostgresqlMajorVersion() (int, error) {
 	if cluster.Spec.ImageCatalogRef != nil {
-		return version.FromTag(strconv.Itoa(cluster.Spec.ImageCatalogRef.Major))
+		return cluster.Spec.ImageCatalogRef.Major, nil
 	}
 
-	image := cluster.GetImageName()
-	tag := reference.New(image).Tag
-	return version.FromTag(tag)
+	if cluster.Spec.ImageName != "" {
+		imgVersion, err := version.FromTag(reference.New(cluster.Spec.ImageName).Tag)
+		if err != nil {
+			return 0, fmt.Errorf("cannot parse image name %q: %w", cluster.Spec.ImageName, err)
+		}
+		return int(imgVersion.Major()), nil //nolint:gosec
+	}
+
+	// Fallback for unit tests where a cluster is created without status or defaults
+	imgVersion, err := version.FromTag(reference.New(configuration.Current.PostgresImageName).Tag)
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse default image name %q: %w", configuration.Current.PostgresImageName, err)
+	}
+	return int(imgVersion.Major()), nil //nolint:gosec
 }
 
 // GetImagePullSecret get the name of the pull secret to use
@@ -610,7 +623,7 @@ func (cluster *Cluster) GetFixedInheritedAnnotations() map[string]string {
 		return meta.Annotations
 	}
 
-	utils.MergeMap(meta.Annotations, cluster.Spec.InheritedMetadata.Annotations)
+	maps.Copy(meta.Annotations, cluster.Spec.InheritedMetadata.Annotations)
 
 	return meta.Annotations
 }
@@ -1042,7 +1055,7 @@ func (cluster *Cluster) GetClusterAltDNSNames() []string {
 			serviceName,
 			fmt.Sprintf("%v.%v", serviceName, cluster.Namespace),
 			fmt.Sprintf("%v.%v.svc", serviceName, cluster.Namespace),
-			fmt.Sprintf("%v.%v.svc.cluster.local", serviceName, cluster.Namespace),
+			fmt.Sprintf("%v.%v.svc.%s", serviceName, cluster.Namespace, configuration.Current.KubernetesClusterDomain),
 		}
 	}
 	altDNSNames := slices.Concat(
@@ -1091,12 +1104,9 @@ func (cluster *Cluster) UsesSecret(secret string) bool {
 		return true
 	}
 
-	if cluster.Status.PoolerIntegrations != nil {
-		for _, pgBouncerSecretName := range cluster.Status.PoolerIntegrations.PgBouncerIntegration.Secrets {
-			if pgBouncerSecretName == secret {
-				return true
-			}
-		}
+	if cluster.Status.PoolerIntegrations != nil &&
+		slices.Contains(cluster.Status.PoolerIntegrations.PgBouncerIntegration.Secrets, secret) {
+		return true
 	}
 
 	// watch the secrets defined in external clusters
@@ -1140,15 +1150,14 @@ func (cluster *Cluster) GetEnableSuperuserAccess() bool {
 
 // LogTimestampsWithMessage prints useful information about timestamps in stdout
 func (cluster *Cluster) LogTimestampsWithMessage(ctx context.Context, logMessage string) {
-	contextLogger := log.FromContext(ctx)
-
 	currentTimestamp := pgTime.GetCurrentTimestamp()
-	keysAndValues := []interface{}{
+
+	contextLogger := log.FromContext(ctx).WithValues(
 		"phase", cluster.Status.Phase,
 		"currentTimestamp", currentTimestamp,
 		"targetPrimaryTimestamp", cluster.Status.TargetPrimaryTimestamp,
 		"currentPrimaryTimestamp", cluster.Status.CurrentPrimaryTimestamp,
-	}
+	)
 
 	var errs []string
 
@@ -1157,11 +1166,7 @@ func (cluster *Cluster) LogTimestampsWithMessage(ctx context.Context, logMessage
 		currentTimestamp,
 		cluster.Status.TargetPrimaryTimestamp,
 	); err == nil {
-		keysAndValues = append(
-			keysAndValues,
-			"msPassedSinceTargetPrimaryTimestamp",
-			diff.Milliseconds(),
-		)
+		contextLogger = contextLogger.WithValues("msPassedSinceTargetPrimaryTimestamp", diff.Milliseconds())
 	} else {
 		errs = append(errs, err.Error())
 	}
@@ -1171,9 +1176,7 @@ func (cluster *Cluster) LogTimestampsWithMessage(ctx context.Context, logMessage
 		currentTimestamp,
 		cluster.Status.CurrentPrimaryTimestamp,
 	); err == nil {
-		keysAndValues = append(
-			keysAndValues,
-			"msPassedSinceCurrentPrimaryTimestamp",
+		contextLogger = contextLogger.WithValues("msPassedSinceCurrentPrimaryTimestamp",
 			currentPrimaryDifference.Milliseconds(),
 		)
 	} else {
@@ -1188,8 +1191,7 @@ func (cluster *Cluster) LogTimestampsWithMessage(ctx context.Context, logMessage
 		cluster.Status.CurrentPrimaryTimestamp,
 		cluster.Status.TargetPrimaryTimestamp,
 	); err == nil {
-		keysAndValues = append(
-			keysAndValues,
+		contextLogger = contextLogger.WithValues(
 			"msDifferenceBetweenCurrentAndTargetPrimary",
 			currentPrimaryTargetDifference.Milliseconds(),
 		)
@@ -1198,10 +1200,10 @@ func (cluster *Cluster) LogTimestampsWithMessage(ctx context.Context, logMessage
 	}
 
 	if len(errs) > 0 {
-		keysAndValues = append(keysAndValues, "timestampParsingErrors", errs)
+		contextLogger = contextLogger.WithValues("timestampParsingErrors", errs)
 	}
 
-	contextLogger.Info(logMessage, keysAndValues...)
+	contextLogger.Info(logMessage)
 }
 
 // SetInheritedDataAndOwnership sets the cluster as owner of the passed object and then
@@ -1271,7 +1273,7 @@ func (cluster *Cluster) GetServerCASecretObjectKey() types.NamespacedName {
 // is configured, false otherwise
 func (backupConfiguration *BackupConfiguration) IsBarmanBackupConfigured() bool {
 	return backupConfiguration != nil && backupConfiguration.BarmanObjectStore != nil &&
-		backupConfiguration.BarmanObjectStore.BarmanCredentials.ArePopulated()
+		backupConfiguration.BarmanObjectStore.ArePopulated()
 }
 
 // IsBarmanEndpointCASet returns true if we have a CA bundle for the endpoint

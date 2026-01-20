@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,12 +13,14 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package scheme
 
 import (
-	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -64,9 +67,9 @@ func (b *Builder) WithAPIExtensionV1() *Builder {
 	return b
 }
 
-// WithStorageSnapshotV1 adds storagesnapshotv1
-func (b *Builder) WithStorageSnapshotV1() *Builder {
-	_ = storagesnapshotv1.AddToScheme(b.scheme)
+// WithVolumeSnapshotV1 adds volumesnapshotv1
+func (b *Builder) WithVolumeSnapshotV1() *Builder {
+	_ = volumesnapshotv1.AddToScheme(b.scheme)
 
 	return b
 }
@@ -83,7 +86,7 @@ func BuildWithAllKnownScheme() *runtime.Scheme {
 		WithClientGoScheme().
 		WithMonitoringV1().
 		WithAPIExtensionV1().
-		WithStorageSnapshotV1().
+		WithVolumeSnapshotV1().
 		Build()
 
 	// +kubebuilder:scaffold:scheme

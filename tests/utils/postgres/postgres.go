@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package postgres
@@ -29,7 +32,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/exec"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/objects"
@@ -92,7 +95,7 @@ func GetCurrentTimestamp(
 		namespace,
 		clusterName,
 		AppDBName,
-		v1.ApplicationUserSecretSuffix,
+		apiv1.ApplicationUserSecretSuffix,
 		"select TO_CHAR(CURRENT_TIMESTAMP,'YYYY-MM-DD HH24:MI:SS.US');",
 	)
 	if err != nil {
@@ -130,4 +133,22 @@ func BumpPostgresImageMajorVersion(postgresImage string) (string, error) {
 	imageReference.Tag = fmt.Sprintf("%d", postgresImageVersion.Major()+1)
 
 	return imageReference.GetNormalizedName(), nil
+}
+
+// IsLatestMajor returns true if the given postgresImage is using latest Postgres major version
+func IsLatestMajor(postgresImage string) bool {
+	// Get the current tag
+	currentImageReference := reference.New(postgresImage)
+	currentImageVersion, err := version.FromTag(currentImageReference.Tag)
+	if err != nil {
+		return false
+	}
+	// Get the default tag
+	defaultImageReference := reference.New(versions.DefaultImageName)
+	defaultImageVersion, err := version.FromTag(defaultImageReference.Tag)
+	if err != nil {
+		return false
+	}
+
+	return currentImageVersion.Major() >= defaultImageVersion.Major()
 }

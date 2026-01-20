@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package volumesnapshot
@@ -20,11 +23,13 @@ import (
 	"context"
 	"fmt"
 
-	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
+
+const pluginName = "cnpg_volumesnapshot"
 
 // volumeSnapshotInfo host information about a volume snapshot
 type volumeSnapshotInfo struct {
@@ -48,7 +53,7 @@ type volumeSnapshotInfo struct {
 type volumeSnapshotError struct {
 	// InternalError is a representation of the error given
 	// by the CSI driver
-	InternalError storagesnapshotv1.VolumeSnapshotError
+	InternalError volumesnapshotv1.VolumeSnapshotError
 
 	// Name is the name of the VolumeSnapshot object
 	Name string
@@ -68,20 +73,19 @@ func (err volumeSnapshotError) Error() string {
 // IsRetryable returns true if the external snapshotter controller
 // will retry taking the snapshot
 func (err volumeSnapshotError) isRetryable() bool {
-	// TODO: instead of blindingly retry on matching errors, we
-	// should enhance our CRD with a configurable deadline. After
-	// the deadline have been met on err.InternalError.CreatedAt
-	// the backup can be marked as failed
+	// The Kubernetes CSI driver/controller will automatically retry snapshot creation
+	// for certain errors, including timeouts. We use pattern matching to identify
+	// these retryable errors and handle them appropriately.
 
 	if err.InternalError.Message == nil {
 		return false
 	}
 
-	return isRetriableErrorMessage(*err.InternalError.Message)
+	return isCSIErrorMessageRetriable(*err.InternalError.Message)
 }
 
-// slice represents a slice of []storagesnapshotv1.VolumeSnapshot
-type slice []storagesnapshotv1.VolumeSnapshot
+// slice represents a slice of []volumesnapshotv1.VolumeSnapshot
+type slice []volumesnapshotv1.VolumeSnapshot
 
 // getControldata retrieves the pg_controldata stored as an annotation in VolumeSnapshots
 func (s slice) getControldata() (string, error) {
@@ -101,15 +105,15 @@ func getBackupVolumeSnapshots(
 	ctx context.Context,
 	cli client.Client,
 	namespace string,
-	backupLabelName string,
+	backupName string,
 ) (slice, error) {
-	var list storagesnapshotv1.VolumeSnapshotList
+	var list volumesnapshotv1.VolumeSnapshotList
 
 	if err := cli.List(
 		ctx,
 		&list,
 		client.InNamespace(namespace),
-		client.MatchingLabels{utils.BackupNameLabelName: backupLabelName},
+		client.MatchingLabels{utils.BackupNameLabelName: backupName},
 	); err != nil {
 		return nil, err
 	}
@@ -118,7 +122,7 @@ func getBackupVolumeSnapshots(
 }
 
 // parseVolumeSnapshotInfo extracts information from a volume snapshot resource
-func parseVolumeSnapshotInfo(snapshot *storagesnapshotv1.VolumeSnapshot) volumeSnapshotInfo {
+func parseVolumeSnapshotInfo(snapshot *volumesnapshotv1.VolumeSnapshot) volumeSnapshotInfo {
 	if snapshot.Status == nil {
 		return volumeSnapshotInfo{
 			error:       nil,

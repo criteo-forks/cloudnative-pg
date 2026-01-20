@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1
@@ -36,10 +39,12 @@ import (
 // AllowedPgbouncerGenericConfigurationParameters is the list of allowed parameters for PgBouncer
 var AllowedPgbouncerGenericConfigurationParameters = stringset.From([]string{
 	"application_name_add_host",
+	"auth_type",
 	"autodb_idle_timeout",
 	"cancel_wait_timeout",
 	"client_idle_timeout",
 	"client_login_timeout",
+	"client_tls_sslmode",
 	"default_pool_size",
 	"disable_pqexec",
 	"dns_max_ttl",
@@ -75,6 +80,7 @@ var AllowedPgbouncerGenericConfigurationParameters = stringset.From([]string{
 	"server_round_robin",
 	"server_tls_ciphers",
 	"server_tls_protocols",
+	"server_tls_sslmode",
 	"stats_period",
 	"suspend_timeout",
 	"tcp_defer_accept",
@@ -94,7 +100,7 @@ var poolerLog = log.WithName("pooler-resource").WithValues("version", "v1")
 // SetupPoolerWebhookWithManager registers the webhook for Pooler in the manager.
 func SetupPoolerWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(&apiv1.Pooler{}).
-		WithValidator(&PoolerCustomValidator{}).
+		WithValidator(newBypassableValidator(&PoolerCustomValidator{})).
 		Complete()
 }
 
@@ -124,6 +130,8 @@ func (v *PoolerCustomValidator) ValidateCreate(_ context.Context, obj runtime.Ob
 		warns = append(warns, fmt.Sprintf("The operator won't handle the Pooler %q integration with the Cluster %q (%q). "+
 			"Manually configure it as described in the docs.", pooler.Name, pooler.Spec.Cluster.Name, pooler.Namespace))
 	}
+
+	warns = append(warns, v.validateDeprecatedMonitoringFields(pooler)...)
 
 	allErrs := v.validate(pooler)
 
@@ -161,13 +169,15 @@ func (v *PoolerCustomValidator) ValidateUpdate(
 			"Manually configure it as described in the docs.", pooler.Name, pooler.Spec.Cluster.Name, pooler.Namespace))
 	}
 
+	warns = append(warns, v.validateDeprecatedMonitoringFields(pooler)...)
+
 	allErrs := v.validate(pooler)
 	if len(allErrs) == 0 {
 		return warns, nil
 	}
 
 	return warns, apierrors.NewInvalid(
-		schema.GroupKind{Group: "pooler.cnpg.io", Kind: "Pooler"},
+		schema.GroupKind{Group: "postgresql.cnpg.io", Kind: "Pooler"},
 		pooler.Name, allErrs)
 }
 
@@ -251,4 +261,21 @@ func (v *PoolerCustomValidator) validatePgbouncerGenericParameters(r *apiv1.Pool
 		}
 	}
 	return result
+}
+
+// validateDeprecatedMonitoringFields returns warnings for deprecated monitoring fields
+func (v *PoolerCustomValidator) validateDeprecatedMonitoringFields(r *apiv1.Pooler) admission.Warnings {
+	var warns admission.Warnings
+
+	//nolint:staticcheck // Checking deprecated fields to warn users
+	if r.Spec.Monitoring != nil {
+		if r.Spec.Monitoring.EnablePodMonitor ||
+			len(r.Spec.Monitoring.PodMonitorMetricRelabelConfigs) > 0 ||
+			len(r.Spec.Monitoring.PodMonitorRelabelConfigs) > 0 {
+			warns = append(warns, "spec.monitoring is deprecated and will be removed in a future release. "+
+				"Set this field to false and create a PodMonitor resource for your pooler as described in the documentation")
+		}
+	}
+
+	return warns
 }

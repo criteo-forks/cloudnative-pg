@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package controller
@@ -19,10 +22,12 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"time"
 
+	"github.com/cloudnative-pg/machinery/pkg/log"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/sethvargo/go-password/password"
 	batchv1 "k8s.io/api/batch/v1"
@@ -46,7 +51,6 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
-	"github.com/cloudnative-pg/machinery/pkg/log"
 )
 
 // createPostgresClusterObjects ensures that we have the required global objects
@@ -340,7 +344,7 @@ func (r *ClusterReconciler) reconcileManagedServices(ctx context.Context, cluste
 
 	// we delete the old managed services not appearing anymore in the spec
 	var livingServices corev1.ServiceList
-	if err := r.Client.List(ctx, &livingServices, client.InNamespace(cluster.Namespace), client.MatchingLabels{
+	if err := r.List(ctx, &livingServices, client.InNamespace(cluster.Namespace), client.MatchingLabels{
 		utils.IsManagedLabelName: "true",
 		utils.ClusterLabelName:   cluster.Name,
 	}); err != nil {
@@ -386,13 +390,13 @@ func (r *ClusterReconciler) serviceReconciler(
 	)
 
 	var livingService corev1.Service
-	err := r.Client.Get(ctx, types.NamespacedName{Name: proposed.Name, Namespace: proposed.Namespace}, &livingService)
+	err := r.Get(ctx, types.NamespacedName{Name: proposed.Name, Namespace: proposed.Namespace}, &livingService)
 	if apierrs.IsNotFound(err) {
 		if !enabled {
 			return nil
 		}
 		contextLogger.Info("creating service")
-		return r.Client.Create(ctx, proposed)
+		return r.Create(ctx, proposed)
 	}
 	if err != nil {
 		return err
@@ -409,7 +413,7 @@ func (r *ClusterReconciler) serviceReconciler(
 
 	if !enabled {
 		contextLogger.Info("deleting service, due to not being managed anymore")
-		return r.Client.Delete(ctx, &livingService)
+		return r.Delete(ctx, &livingService)
 	}
 	var shouldUpdate bool
 
@@ -429,12 +433,12 @@ func (r *ClusterReconciler) serviceReconciler(
 
 	// we preserve existing labels/annotation that could be added by third parties
 	if !utils.IsMapSubset(livingService.Labels, proposed.Labels) {
-		utils.MergeMap(livingService.Labels, proposed.Labels)
+		maps.Copy(livingService.Labels, proposed.Labels)
 		shouldUpdate = true
 	}
 
 	if !utils.IsMapSubset(livingService.Annotations, proposed.Annotations) {
-		utils.MergeMap(livingService.Annotations, proposed.Annotations)
+		maps.Copy(livingService.Annotations, proposed.Annotations)
 		shouldUpdate = true
 	}
 
@@ -445,11 +449,11 @@ func (r *ClusterReconciler) serviceReconciler(
 	if strategy == apiv1.ServiceUpdateStrategyPatch {
 		contextLogger.Info("reconciling service")
 		// we update to ensure that we substitute the selectors
-		return r.Client.Update(ctx, &livingService)
+		return r.Update(ctx, &livingService)
 	}
 
 	contextLogger.Info("deleting the service")
-	if err := r.Client.Delete(ctx, &livingService); err != nil {
+	if err := r.Delete(ctx, &livingService); err != nil {
 		return err
 	}
 
@@ -1113,7 +1117,7 @@ func (r *ClusterReconciler) createPrimaryInstance(
 		recoverySnapshot,
 		nodeSerial,
 	); err != nil {
-		return ctrl.Result{RequeueAfter: time.Minute}, err
+		return ctrl.Result{}, fmt.Errorf("cannot create primary instance PVCs: %w", err)
 	}
 
 	// We are bootstrapping a cluster and in need to create the first node
@@ -1248,7 +1252,7 @@ func (r *ClusterReconciler) joinReplicaInstance(
 		"job", job.Name,
 		"primary", false,
 		"storageSource", storageSource,
-		"role", job.Spec.Template.ObjectMeta.Labels[utils.JobRoleLabelName],
+		"role", job.Spec.Template.Labels[utils.JobRoleLabelName],
 	)
 
 	r.Recorder.Eventf(cluster, "Normal", "CreatingInstance",
@@ -1292,7 +1296,7 @@ func (r *ClusterReconciler) joinReplicaInstance(
 		storageSource,
 		nodeSerial,
 	); err != nil {
-		return ctrl.Result{RequeueAfter: time.Minute}, err
+		return ctrl.Result{}, fmt.Errorf("cannot create replica instance PVCs: %w", err)
 	}
 
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, ErrNextLoop
@@ -1307,7 +1311,7 @@ func (r *ClusterReconciler) ensureInstancesAreCreated(
 ) (ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
-	instanceToCreate, err := findInstancePodToCreate(cluster, instancesStatus, resources.pvcs.Items)
+	instanceToCreate, err := findInstancePodToCreate(ctx, cluster, instancesStatus, resources.pvcs.Items)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1341,19 +1345,6 @@ func (r *ClusterReconciler) ensureInstancesAreCreated(
 				"instance", instanceToCreate.Name,
 			)
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, ErrNextLoop
-		}
-
-		if configuration.Current.EnableAzurePVCUpdates {
-			for _, resizingPVC := range cluster.Status.ResizingPVC {
-				// if the pvc is in resizing state we requeue and wait
-				if resizingPVC == instancePVC.Name {
-					contextLogger.Info(
-						"PVC is in resizing status, retrying in 5 seconds",
-						"instance", instanceToCreate.Name,
-					)
-					return ctrl.Result{RequeueAfter: 5 * time.Second}, ErrNextLoop
-				}
-			}
 		}
 	}
 
@@ -1394,6 +1385,7 @@ func (r *ClusterReconciler) ensureInstancesAreCreated(
 
 // we elect a current instance that doesn't exist for creation
 func findInstancePodToCreate(
+	ctx context.Context,
 	cluster *apiv1.Cluster,
 	instancesStatus postgres.PostgresqlStatusList,
 	pvcs []corev1.PersistentVolumeClaim,
@@ -1440,7 +1432,7 @@ func findInstancePodToCreate(
 		if err != nil {
 			return nil, err
 		}
-		return specs.PodWithExistingStorage(*cluster, serial)
+		return specs.NewInstance(ctx, *cluster, serial, true)
 	}
 
 	return nil, nil

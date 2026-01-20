@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -278,15 +281,17 @@ var _ = Describe("Pod eviction", Serial, Label(tests.LabelDisruptive), func() {
 			})
 
 			By("checking switchover happens", func() {
-				Eventually(func() bool {
+				Eventually(func() (bool, error) {
 					podList, err := clusterutils.ListPods(env.Ctx, env.Client, namespace, clusterName)
-					Expect(err).ToNot(HaveOccurred())
+					if err != nil {
+						return false, err
+					}
 					for _, p := range podList.Items {
 						if specs.IsPodPrimary(p) && primaryPod.GetName() != p.GetName() {
-							return true
+							return true, nil
 						}
 					}
-					return false
+					return false, nil
 				}, 60).Should(BeTrue())
 			})
 

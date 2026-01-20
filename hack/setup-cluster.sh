@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 ##
-## Copyright The CloudNativePG Contributors
+## Copyright © contributors to CloudNativePG, established as
+## CloudNativePG a Series of LF Projects, LLC.
 ##
 ## Licensed under the Apache License, Version 2.0 (the "License");
 ## you may not use this file except in compliance with the License.
@@ -15,6 +16,8 @@
 ## See the License for the specific language governing permissions and
 ## limitations under the License.
 ##
+## SPDX-License-Identifier: Apache-2.0
+##
 
 # standard bash error handling
 set -eEuo pipefail
@@ -24,12 +27,18 @@ if [ "${DEBUG-}" = true ]; then
 fi
 
 # Defaults
-KIND_NODE_DEFAULT_VERSION=v1.32.2
-CSI_DRIVER_HOST_PATH_DEFAULT_VERSION=v1.15.0
-EXTERNAL_SNAPSHOTTER_VERSION=v8.2.0
-EXTERNAL_PROVISIONER_VERSION=v5.2.0
-EXTERNAL_RESIZER_VERSION=v1.13.1
-EXTERNAL_ATTACHER_VERSION=v4.8.0
+# renovate: datasource=docker depName=kindest/node
+KIND_NODE_DEFAULT_VERSION=v1.34.0
+# renovate: datasource=github-releases depName=kubernetes-csi/csi-driver-host-path
+CSI_DRIVER_HOST_PATH_DEFAULT_VERSION=v1.17.0
+# renovate: datasource=github-releases depName=kubernetes-csi/external-snapshotter
+EXTERNAL_SNAPSHOTTER_VERSION=v8.4.0
+# renovate: datasource=github-releases depName=kubernetes-csi/external-provisioner
+EXTERNAL_PROVISIONER_VERSION=v6.1.0
+# renovate: datasource=github-releases depName=kubernetes-csi/external-resizer
+EXTERNAL_RESIZER_VERSION=v2.0.0
+# renovate: datasource=github-releases depName=kubernetes-csi/external-attacher
+EXTERNAL_ATTACHER_VERSION=v4.10.0
 K8S_VERSION=${K8S_VERSION-}
 KUBECTL_VERSION=${KUBECTL_VERSION-}
 CSI_DRIVER_HOST_PATH_VERSION=${CSI_DRIVER_HOST_PATH_VERSION:-$CSI_DRIVER_HOST_PATH_DEFAULT_VERSION}
@@ -61,9 +70,9 @@ case $ARCH in
   aarch64) ARCH="arm64" ;;
 esac
 
-# If arm64 and user did not set it explicitly
-if [ "${ARCH}" = "arm64" ]  && [ "${DOCKER_DEFAULT_PLATFORM}" = "" ]; then
-  DOCKER_DEFAULT_PLATFORM=linux/arm64
+# If user did not set it explicitly
+if [ "${DOCKER_DEFAULT_PLATFORM}" = "" ]; then
+  DOCKER_DEFAULT_PLATFORM="linux/${ARCH}"
 fi
 export DOCKER_DEFAULT_PLATFORM
 
@@ -80,7 +89,7 @@ builder_name=cnpg-builder
 # #########################################################################
 POSTGRES_IMG=${POSTGRES_IMG:-$(grep 'DefaultImageName.*=' "${ROOT_DIR}/pkg/versions/versions.go" | cut -f 2 -d \")}
 E2E_PRE_ROLLING_UPDATE_IMG=${E2E_PRE_ROLLING_UPDATE_IMG:-${POSTGRES_IMG%.*}}
-PGBOUNCER_IMG=${PGBOUNCER_IMG:-$(grep 'DefaultPgbouncerImage.*=' "${ROOT_DIR}/pkg/specs/pgbouncer/deployments.go" | cut -f 2 -d \")}
+PGBOUNCER_IMG=${PGBOUNCER_IMG:-$(grep 'DefaultPgbouncerImage.*=' "${ROOT_DIR}/pkg/versions/versions.go" | cut -f 2 -d \")}
 MINIO_IMG=${MINIO_IMG:-$(grep 'minioImage.*=' "${ROOT_DIR}/tests/utils/minio/minio.go"  | cut -f 2 -d \")}
 APACHE_IMG=${APACHE_IMG:-"httpd"}
 
@@ -116,7 +125,6 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   apiServerAddress: "0.0.0.0"
-  kubeProxyMode: "ipvs"
 
 # add to the apiServer certSANs the name of the docker (dind) service in order to be able to reach the cluster through it
 kubeadmConfigPatchesJSON6902:
@@ -298,11 +306,18 @@ deploy_csi_host_path() {
   kubectl apply -f "${CSI_BASE_URL}"/external-resizer/"${EXTERNAL_RESIZER_VERSION}"/deploy/kubernetes/rbac.yaml
 
   ## Install driver and plugin
-  kubectl apply -f "${CSI_BASE_URL}"/csi-driver-host-path/"${CSI_DRIVER_HOST_PATH_VERSION}"/deploy/kubernetes-1.27/hostpath/csi-hostpath-driverinfo.yaml
-  kubectl apply -f "${CSI_BASE_URL}"/csi-driver-host-path/"${CSI_DRIVER_HOST_PATH_VERSION}"/deploy/kubernetes-1.27/hostpath/csi-hostpath-plugin.yaml
+  ## Create a temporary file for the modified plugin deployment. This is needed
+  ## because csi-driver-host-path plugin yaml tends to lag behind a few versions.
+  plugin_file="${TEMP_DIR}/csi-hostpath-plugin.yaml"
+  curl -sSL "${CSI_BASE_URL}/csi-driver-host-path/${CSI_DRIVER_HOST_PATH_VERSION}/deploy/kubernetes-1.30/hostpath/csi-hostpath-plugin.yaml" |
+    sed "s|registry.k8s.io/sig-storage/hostpathplugin:.*|registry.k8s.io/sig-storage/hostpathplugin:${CSI_DRIVER_HOST_PATH_VERSION}|g" > "${plugin_file}"
+
+  kubectl apply -f "${CSI_BASE_URL}"/csi-driver-host-path/"${CSI_DRIVER_HOST_PATH_VERSION}"/deploy/kubernetes-1.30/hostpath/csi-hostpath-driverinfo.yaml
+  kubectl apply -f "${plugin_file}"
+  rm "${plugin_file}"
 
   ## create volumesnapshotclass
-  kubectl apply -f "${CSI_BASE_URL}"/csi-driver-host-path/"${CSI_DRIVER_HOST_PATH_VERSION}"/deploy/kubernetes-1.27/hostpath/csi-hostpath-snapshotclass.yaml
+  kubectl apply -f "${CSI_BASE_URL}"/csi-driver-host-path/"${CSI_DRIVER_HOST_PATH_VERSION}"/deploy/kubernetes-1.30/hostpath/csi-hostpath-snapshotclass.yaml
 
   ## Prevent VolumeSnapshot E2e test to fail when taking a
   ## snapshot of a running PostgreSQL instance
@@ -339,26 +354,7 @@ deploy_pyroscope() {
 pyroscopeConfigs:
   log-level: "debug"
 EOF
-  helm -n cnpg-system install pyroscope pyroscope-io/pyroscope -f "${values_file}"
-
-  service_file="${TEMP_DIR}/pyroscope_service.yaml"
-
-  cat >"${service_file}" <<-EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: cnpg-pprof
-spec:
-  ports:
-  - targetPort: 6060
-    port: 6060
-  selector:
-    app: cnpg-pprof
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: cloudnative-pg
-EOF
-  kubectl -n cnpg-system apply -f "${service_file}"
+  helm upgrade --install --create-namespace -n pyroscope pyroscope pyroscope-io/pyroscope -f "${values_file}"
 
   annotations="${TEMP_DIR}/pyroscope_annotations.yaml"
   cat >"${annotations}" <<- EOF
@@ -375,6 +371,14 @@ spec:
 EOF
 
   kubectl -n cnpg-system patch deployment cnpg-controller-manager --patch-file "${annotations}"
+
+  configMaps="${TEMP_DIR}/cnpg_configmap_config.yaml"
+  cat >"${configMaps}" <<-EOF
+data:
+   INHERITED_ANNOTATIONS: "profiles.grafana.com/*"
+EOF
+  configMapName=$(kubectl -n cnpg-system get deployments.apps cnpg-controller-manager -o jsonpath='{.spec.template.spec.containers[0].envFrom[0].configMapRef.name}')
+  kubectl -n cnpg-system patch configmap "${configMapName}" --patch-file "${configMaps}"
 }
 
 deploy_prometheus_crds() {
@@ -388,7 +392,7 @@ load_image_registry() {
 
   local image_local_name=${image/${registry_name}/127.0.0.1}
   docker tag "${image}" "${image_local_name}"
-  docker push -q "${image_local_name}"
+  docker push --platform "${DOCKER_DEFAULT_PLATFORM}" -q "${image_local_name}"
 }
 
 load_image() {
@@ -417,7 +421,7 @@ Commands:
     export-logs           Export the logs from the cluster inside the directory
                           ${LOG_DIR}
     destroy               Destroy the cluster
-    pyroscope             Deploy Pyroscope inside operator namespace
+    pyroscope             Deploy Pyroscope and enable pprof for the operator
 
 Options:
     -k|--k8s-version

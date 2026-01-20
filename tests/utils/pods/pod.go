@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package pods provides pod utilities to manage pods inside K8s
@@ -26,7 +29,7 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v4"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -41,8 +44,8 @@ func List(
 	ctx context.Context,
 	crudClient client.Client,
 	namespace string,
-) (*v1.PodList, error) {
-	podList := &v1.PodList{}
+) (*corev1.PodList, error) {
+	podList := &corev1.PodList{}
 	err := objects.List(
 		ctx, crudClient, podList, client.InNamespace(namespace),
 	)
@@ -72,7 +75,7 @@ func Delete(
 func CreateAndWaitForReady(
 	ctx context.Context,
 	crudClient client.Client,
-	pod *v1.Pod,
+	pod *corev1.Pod,
 	timeoutSeconds uint,
 ) error {
 	_, err := objects.Create(ctx, crudClient, pod)
@@ -86,7 +89,7 @@ func CreateAndWaitForReady(
 func waitForReady(
 	ctx context.Context,
 	crudClient client.Client,
-	pod *v1.Pod,
+	pod *corev1.Pod,
 	timeoutSeconds uint,
 ) error {
 	err := retry.Do(
@@ -115,7 +118,7 @@ func Logs(
 	kubeInterface kubernetes.Interface,
 	namespace, podName string,
 ) (string, error) {
-	req := kubeInterface.CoreV1().Pods(namespace).GetLogs(podName, &v1.PodLogOptions{})
+	req := kubeInterface.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{})
 	podLogs, err := req.Stream(ctx)
 	if err != nil {
 		return "", err
@@ -141,7 +144,7 @@ func Get(
 	ctx context.Context,
 	crudClient client.Client,
 	namespace, podName string,
-) (*v1.Pod, error) {
+) (*corev1.Pod, error) {
 	wrapErr := func(err error) error {
 		return fmt.Errorf("while getting pod '%s/%s': %w", namespace, podName, err)
 	}
@@ -159,7 +162,7 @@ func Get(
 
 // HasLabels verifies that the labels of a pod contain a specified
 // labels map
-func HasLabels(pod v1.Pod, labels map[string]string) bool {
+func HasLabels(pod corev1.Pod, labels map[string]string) bool {
 	podLabels := pod.Labels
 	for k, v := range labels {
 		val, ok := podLabels[k]
@@ -172,7 +175,7 @@ func HasLabels(pod v1.Pod, labels map[string]string) bool {
 
 // HasAnnotations verifies that the annotations of a pod contain a specified
 // annotations map
-func HasAnnotations(pod v1.Pod, annotations map[string]string) bool {
+func HasAnnotations(pod corev1.Pod, annotations map[string]string) bool {
 	podAnnotations := pod.Annotations
 	for k, v := range annotations {
 		val, ok := podAnnotations[k]
@@ -184,7 +187,7 @@ func HasAnnotations(pod v1.Pod, annotations map[string]string) bool {
 }
 
 // HasCondition verifies that a pod has a specified condition
-func HasCondition(pod *v1.Pod, conditionType v1.PodConditionType, status v1.ConditionStatus) bool {
+func HasCondition(pod *corev1.Pod, conditionType corev1.PodConditionType, status corev1.ConditionStatus) bool {
 	for _, cond := range pod.Status.Conditions {
 		if cond.Type == conditionType && cond.Status == status {
 			return true

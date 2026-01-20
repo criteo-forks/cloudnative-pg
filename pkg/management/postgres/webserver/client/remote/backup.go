@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package remote
@@ -57,7 +60,7 @@ func (c *backupClientImpl) StatusWithErrors(
 ) (*webserver.Response[webserver.BackupResultData], error) {
 	scheme := GetStatusSchemeFromPod(pod)
 	httpURL := url.Build(scheme.ToString(), pod.Status.PodIP, url.PathPgModeBackup, url.StatusPort)
-	req, err := http.NewRequestWithContext(ctx, "GET", httpURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +83,7 @@ func (c *backupClientImpl) Start(
 		return nil, fmt.Errorf("failed to marshal start payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", httpURL, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, httpURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +106,7 @@ func (c *backupClientImpl) Stop(
 		return nil, fmt.Errorf("failed to marshal stop payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PUT", httpURL, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, httpURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}

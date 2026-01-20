@@ -1,4 +1,11 @@
+---
+id: kubectl-plugin
+sidebar_position: 390
+title: Kubectl Plugin
+---
+
 # Kubectl Plugin
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 CloudNativePG provides a plugin for `kubectl` to manage a cluster in Kubernetes.
 
@@ -30,11 +37,11 @@ them in your systems.
 
 #### Debian packages
 
-For example, let's install the 1.25.1 release of the plugin, for an Intel based
+For example, let's install the 1.26.3 release of the plugin, for an Intel based
 64 bit server. First, we download the right `.deb` file.
 
 ```sh
-wget https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.25.1/kubectl-cnpg_1.25.1_linux_x86_64.deb \
+wget https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.26.3/kubectl-cnpg_1.26.3_linux_x86_64.deb \
   --output-document kube-plugin.deb
 ```
 
@@ -45,17 +52,17 @@ $ sudo dpkg -i kube-plugin.deb
 Selecting previously unselected package cnpg.
 (Reading database ... 6688 files and directories currently installed.)
 Preparing to unpack kube-plugin.deb ...
-Unpacking cnpg (1.25.1) ...
-Setting up cnpg (1.25.1) ...
+Unpacking cnpg (1.26.3) ...
+Setting up cnpg (1.26.3) ...
 ```
 
 #### RPM packages
 
-As in the example for `.rpm` packages, let's install the 1.25.1 release for an
+As in the example for `.rpm` packages, let's install the 1.26.3 release for an
 Intel 64 bit machine. Note the `--output` flag to provide a file name.
 
 ```sh
-curl -L https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.25.1/kubectl-cnpg_1.25.1_linux_x86_64.rpm \
+curl -L https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.26.3/kubectl-cnpg_1.26.3_linux_x86_64.rpm \
   --output kube-plugin.rpm
 ```
 
@@ -69,7 +76,7 @@ Dependencies resolved.
  Package            Architecture         Version                   Repository                  Size
 ====================================================================================================
 Installing:
- cnpg               x86_64               1.25.1                  @commandline                20 M
+ cnpg               x86_64               1.26.3                  @commandline                20 M
 
 Transaction Summary
 ====================================================================================================
@@ -293,9 +300,9 @@ sandbox-3  0/604DE38  0/604DE38  0/604DE38  0/604DE38   00:00:00   00:00:00   00
 Instances status
 Name       Current LSN  Replication role  Status  QoS         Manager Version  Node
 ----       -----------  ----------------  ------  ---         ---------------  ----
-sandbox-1  0/604DE38    Primary           OK      BestEffort  1.25.1           k8s-eu-worker
-sandbox-2  0/604DE38    Standby (async)   OK      BestEffort  1.25.1           k8s-eu-worker2
-sandbox-3  0/604DE38    Standby (async)   OK      BestEffort  1.25.1           k8s-eu-worker
+sandbox-1  0/604DE38    Primary           OK      BestEffort  1.26.3           k8s-eu-worker
+sandbox-2  0/604DE38    Standby (async)   OK      BestEffort  1.26.3           k8s-eu-worker2
+sandbox-3  0/604DE38    Standby (async)   OK      BestEffort  1.26.3           k8s-eu-worker
 ```
 
 If you require more detailed status information, use the `--verbose` option (or
@@ -349,9 +356,9 @@ sandbox-primary  primary  1              1                1                     
 Instances status
 Name       Current LSN  Replication role  Status  QoS         Manager Version  Node
 ----       -----------  ----------------  ------  ---         ---------------  ----
-sandbox-1  0/6053720    Primary           OK      BestEffort  1.25.1           k8s-eu-worker
-sandbox-2  0/6053720    Standby (async)   OK      BestEffort  1.25.1           k8s-eu-worker2
-sandbox-3  0/6053720    Standby (async)   OK      BestEffort  1.25.1           k8s-eu-worker
+sandbox-1  0/6053720    Primary           OK      BestEffort  1.26.3           k8s-eu-worker
+sandbox-2  0/6053720    Standby (async)   OK      BestEffort  1.26.3           k8s-eu-worker2
+sandbox-3  0/6053720    Standby (async)   OK      BestEffort  1.26.3           k8s-eu-worker
 ```
 
 With an additional `-v` (e.g. `kubectl cnpg status sandbox -v -v`), you can
@@ -574,12 +581,12 @@ Archive:  report_operator_<TIMESTAMP>.zip
 
 ```output
 ====== Beginning of Previous Log =====
-2023-03-28T12:56:41.251711811Z {"level":"info","ts":"2023-03-28T12:56:41Z","logger":"setup","msg":"Starting CloudNativePG Operator","version":"1.25.1","build":{"Version":"1.25.1+dev107","Commit":"cc9bab17","Date":"2023-03-28"}}
+2023-03-28T12:56:41.251711811Z {"level":"info","ts":"2023-03-28T12:56:41Z","logger":"setup","msg":"Starting CloudNativePG Operator","version":"1.26.3","build":{"Version":"1.26.3+dev107","Commit":"cc9bab17","Date":"2023-03-28"}}
 2023-03-28T12:56:41.251851909Z {"level":"info","ts":"2023-03-28T12:56:41Z","logger":"setup","msg":"Starting pprof HTTP server","addr":"0.0.0.0:6060"}
   <snipped …>
 
 ====== End of Previous Log =====
-2023-03-28T12:57:09.854306024Z {"level":"info","ts":"2023-03-28T12:57:09Z","logger":"setup","msg":"Starting CloudNativePG Operator","version":"1.25.1","build":{"Version":"1.25.1+dev107","Commit":"cc9bab17","Date":"2023-03-28"}}
+2023-03-28T12:57:09.854306024Z {"level":"info","ts":"2023-03-28T12:57:09Z","logger":"setup","msg":"Starting CloudNativePG Operator","version":"1.26.3","build":{"Version":"1.26.3+dev107","Commit":"cc9bab17","Date":"2023-03-28"}}
 2023-03-28T12:57:09.854363943Z {"level":"info","ts":"2023-03-28T12:57:09Z","logger":"setup","msg":"Starting pprof HTTP server","addr":"0.0.0.0:6060"}
 ```
 
@@ -895,61 +902,47 @@ PVCs:
 kubectl cnpg destroy cluster-example 2
 ```
 
-### Cluster hibernation
+### Cluster Hibernation
 
-Sometimes you may want to suspend the execution of a CloudNativePG `Cluster`
-while retaining its data, then resume its activity at a later time. We've
-called this feature **cluster hibernation**.
+There are times when you may need to temporarily suspend a CloudNativePG
+`Cluster` while preserving its data, allowing you to resume operations later.
+This feature is known as **cluster hibernation**.
 
-Hibernation is only available via the `kubectl cnpg hibernate [on|off]`
-commands.
+Hibernation is managed declaratively using the `cnpg.io/hibernation`
+annotation.
 
-Hibernating a CloudNativePG cluster means destroying all the resources
-generated by the cluster, except the PVCs that belong to the PostgreSQL primary
-instance.
+!!! Info
+    For more details, see the ["Declarative Hibernation"](declarative_hibernation.md)
+    documentation page.
 
-You can hibernate a cluster with:
+To simplify the process, the `cnpg` plugin for `kubectl` provides a `hibernate`
+command, which acts as a convenient shortcut for applying the annotation.
+
+To hibernate a cluster, run:
 
 ```sh
 kubectl cnpg hibernate on CLUSTER
 ```
 
-This will:
+This command applies the `cnpg.io/hibernation=on` annotation to the cluster,
+suspending its execution.
 
-1. shutdown every PostgreSQL instance
-2. detach the PVCs containing the data of the primary instance, and annotate
-   them with the latest database status and the latest cluster configuration
-3. delete the `Cluster` resource, including every generated resource - except
-   the aforementioned PVCs
-
-When hibernated, a CloudNativePG cluster is represented by just a group of
-PVCs, in which the one containing the `PGDATA` is annotated with the latest
-available status, including content from `pg_controldata`.
-
-!!! Warning
-    A cluster having fenced instances cannot be hibernated, as fencing is
-    part of the hibernation procedure too.
-
-In case of error the operator will not be able to revert the procedure. You can
-still force the operation with:
-
-```sh
-kubectl cnpg hibernate on CLUSTER --force
-```
-
-A hibernated cluster can be resumed with:
+To resume a hibernated cluster, use:
 
 ```sh
 kubectl cnpg hibernate off CLUSTER
 ```
 
-Once the cluster has been hibernated, it's possible to show the last
-configuration and the status that PostgreSQL had after it was shut down.
-That can be done with:
+This will remove the hibernation state by setting `cnpg.io/hibernation=off`.
+
+You can check the cluster’s status at any time with:
 
 ```sh
-kubectl cnpg hibernate status CLUSTER
+kubectl cnpg status CLUSTER
 ```
+
+This will display the current state of the cluster, including whether it is
+hibernated.
 
 ### Benchmarking the database with pgbench
 
@@ -1022,7 +1015,7 @@ it from the actual pod. This means that you will be using the `postgres` user.
 ```console
 $ kubectl cnpg psql cluster-example
 
-psql (17.4 (Debian 17.4-1.pgdg110+1))
+psql (18.1 (Debian 18.1-1.pgdg110+1))
 Type "help" for help.
 
 postgres=#
@@ -1034,7 +1027,7 @@ select to work against a replica by using the `--replica` option:
 ```console
 $ kubectl cnpg psql --replica cluster-example
 
-psql (17.4 (Debian 17.4-1.pgdg110+1))
+psql (18.1 (Debian 18.1-1.pgdg110+1))
 
 Type "help" for help.
 
@@ -1412,7 +1405,7 @@ table contains the full details:
 | report cluster  | clusters: get<br/>pods: list<br/>pods/log: get<br/>jobs: list<br/>events: list<br/>PVCs: list                                                                                                                                                                                                                                                         |
 | report operator | configmaps: get<br/>deployments: get<br/>events: list<br/>pods: list<br/>pods/log: get<br/>secrets: get<br/>services: get<br/>mutatingwebhookconfigurations: list[^1]<br/> validatingwebhookconfigurations: list[^1]<br/> If OLM is present on the K8s cluster, also:<br/>clusterserviceversions: list<br/>installplans: list<br/>subscriptions: list |
 | restart         | clusters: get,patch<br/>pods: get,delete                                                                                                                                                                                                                                                                                                              |
-| status          | clusters: get<br/>pods: list<br/>pods/exec: create<br/>pods/proxy: create<br/>PDBs: list                                                                                                                                                                                                                                                              |
+| status          | clusters: get<br/>pods: list<br/>pods/exec: create<br/>pods/proxy: create<br/>PDBs: list<br/>objectstores.barmancloud.cnpg.io: get                                                                                                                                                                                                                    |
 | subscription    | clusters: get<br/>pods: get,list<br/>pods/exec: create                                                                                                                                                                                                                                                                                                |
 | version         | none                                                                                                                                                                                                                                                                                                                                                  |
 
@@ -1494,6 +1487,12 @@ rules:
       - policy
     resources:
       - poddisruptionbudgets
+  - verbs:
+      - get
+    apiGroups:
+      - barmancloud.cnpg.io
+    resources:
+      - objectstores
 ```
 
 !!! Important

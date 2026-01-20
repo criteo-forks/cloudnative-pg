@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package probes
@@ -65,7 +68,7 @@ func (c pgStreamingChecker) IsHealthy(ctx context.Context, instance *postgres.In
               THEN true
             WHEN (SELECT coalesce(setting, '') = '' FROM pg_catalog.pg_settings WHERE name = 'primary_conninfo')
               THEN true
-            WHEN (SELECT value FROM lag) < $1
+            WHEN (SELECT value FROM lag) <= $1
               THEN true
             ELSE false
           END AS ready_to_start,

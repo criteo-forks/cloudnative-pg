@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // nolint: dupl
@@ -32,6 +35,8 @@ import (
 
 // nolint: dupl
 var _ = Describe("subscription sql", func() {
+	const defaultPostgresMajorVersion = 17
+
 	var (
 		dbMock sqlmock.Sqlmock
 		db     *sql.DB
@@ -129,28 +134,52 @@ var _ = Describe("subscription sql", func() {
 		}
 		connString := "host=localhost user=test dbname=test"
 
-		sqls := toSubscriptionAlterSQL(obj, connString)
+		sqls := toSubscriptionAlterSQL(obj, connString, defaultPostgresMajorVersion)
 		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" SET PUBLICATION "test_pub"`))
 		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" CONNECTION 'host=localhost user=test dbname=test'`))
 	})
 
-	It("generates correct SQL for altering subscription with parameters", func() {
+	It("generates correct SQL for altering subscription with parameters for PostgreSQL 17", func() {
 		obj := &apiv1.Subscription{
 			Spec: apiv1.SubscriptionSpec{
 				Name:            "test_sub",
 				PublicationName: "test_pub",
 				Parameters: map[string]string{
-					"param1": "value1",
-					"param2": "value2",
+					"copy_data": "true",
+					"origin":    "none",
+					"failover":  "true",
+					"two_phase": "true",
 				},
 			},
 		}
 		connString := "host=localhost user=test dbname=test"
 
-		sqls := toSubscriptionAlterSQL(obj, connString)
+		sqls := toSubscriptionAlterSQL(obj, connString, 17)
 		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" SET PUBLICATION "test_pub"`))
 		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" CONNECTION 'host=localhost user=test dbname=test'`))
-		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" SET ("param1" = 'value1', "param2" = 'value2')`))
+		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" SET ("failover" = 'true', "origin" = 'none')`))
+	})
+
+	It("generates correct SQL for altering subscription with parameters for PostgreSQL 18", func() {
+		obj := &apiv1.Subscription{
+			Spec: apiv1.SubscriptionSpec{
+				Name:            "test_sub",
+				PublicationName: "test_pub",
+				Parameters: map[string]string{
+					"copy_data": "true",
+					"origin":    "none",
+					"failover":  "true",
+					"two_phase": "true",
+				},
+			},
+		}
+		connString := "host=localhost user=test dbname=test"
+
+		sqls := toSubscriptionAlterSQL(obj, connString, 18)
+		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" SET PUBLICATION "test_pub"`))
+		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" CONNECTION 'host=localhost user=test dbname=test'`))
+		Expect(sqls).To(ContainElement(
+			`ALTER SUBSCRIPTION "test_sub" SET ("failover" = 'true', "origin" = 'none', "two_phase" = 'true')`))
 	})
 
 	It("returns correct SQL for altering subscription with no owner or parameters", func() {
@@ -162,7 +191,7 @@ var _ = Describe("subscription sql", func() {
 		}
 		connString := "host=localhost user=test dbname=test"
 
-		sqls := toSubscriptionAlterSQL(obj, connString)
+		sqls := toSubscriptionAlterSQL(obj, connString, defaultPostgresMajorVersion)
 		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" SET PUBLICATION "test_pub"`))
 		Expect(sqls).To(ContainElement(`ALTER SUBSCRIPTION "test_sub" CONNECTION 'host=localhost user=test dbname=test'`))
 	})

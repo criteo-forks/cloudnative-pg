@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,12 +13,13 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -33,9 +35,9 @@ import (
 	"github.com/thoas/go-funk"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/strings/slices"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -134,11 +136,11 @@ func AssertSwitchoverWithHistory(
 	})
 
 	By("waiting that the TargetPrimary become also CurrentPrimary", func() {
-		Eventually(func() (string, error) {
+		Eventually(func(g Gomega) {
 			cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-			Expect(err).ToNot(HaveOccurred())
-			return cluster.Status.CurrentPrimary, err
-		}, testTimeouts[timeouts.NewPrimaryAfterSwitchover]).Should(BeEquivalentTo(targetPrimary))
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(cluster.Status.CurrentPrimary).To(BeEquivalentTo(targetPrimary))
+		}, testTimeouts[timeouts.NewPrimaryAfterSwitchover]).Should(Succeed())
 	})
 
 	By("waiting that the old primary become ready", func() {
@@ -331,7 +333,6 @@ func AssertClusterDefault(
 		Eventually(func(g Gomega) {
 			var err error
 			cluster, err = clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-			Expect(err).ToNot(HaveOccurred())
 			g.Expect(err).ToNot(HaveOccurred())
 		}).Should(Succeed())
 
@@ -448,23 +449,6 @@ func AssertConnection(
 			g.Expect(strings.TrimSpace(rawValue)).To(BeEquivalentTo("1"))
 		}, RetryTimeout).Should(Succeed())
 	})
-}
-
-// AssertOperatorIsReady verifies that the operator is ready
-func AssertOperatorIsReady(
-	ctx context.Context,
-	crudClient ctrlclient.Client,
-	kubeInterface kubernetes.Interface,
-) {
-	Eventually(func() (bool, error) {
-		ready, err := operator.IsReady(ctx, crudClient, kubeInterface)
-		if ready && err == nil {
-			return true, nil
-		}
-		// Waiting a bit to avoid overloading the API server
-		time.Sleep(1 * time.Second)
-		return ready, err
-	}, testTimeouts[timeouts.OperatorIsReady]).Should(BeTrue(), "Operator pod is not ready")
 }
 
 type TableLocator struct {
@@ -767,12 +751,15 @@ func AssertNewPrimary(namespace string, clusterName string, oldPrimary string) {
 		timeout := 120
 		// Wait for the operator to set a new TargetPrimary
 		var cluster *apiv1.Cluster
-		Eventually(func() (string, error) {
+		Eventually(func(g Gomega) {
 			var err error
 			cluster, err = clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-			Expect(err).ToNot(HaveOccurred())
-			return cluster.Status.TargetPrimary, err
-		}, timeout).ShouldNot(Or(BeEquivalentTo(oldPrimary), BeEquivalentTo(apiv1.PendingFailoverMarker)))
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(cluster.Status.TargetPrimary).ToNot(Or(
+				BeEquivalentTo(oldPrimary),
+				BeEquivalentTo(apiv1.PendingFailoverMarker),
+			))
+		}, timeout).Should(Succeed())
 		newPrimary := cluster.Status.TargetPrimary
 
 		// Expect the chosen pod to eventually become a primary
@@ -1243,24 +1230,15 @@ func AssertFastFailOver(
 	// Node 1 should be the primary, so the -rw service should
 	// point there. We verify this.
 	By("having the current primary on node1", func() {
-		endpointName := clusterName + "-rw"
-		endpoint := &corev1.Endpoints{}
-		endpointNamespacedName := types.NamespacedName{
-			Namespace: namespace,
-			Name:      endpointName,
-		}
-		podName := clusterName + "-1"
-		pod := &corev1.Pod{}
-		podNamespacedName := types.NamespacedName{
-			Namespace: namespace,
-			Name:      podName,
-		}
-		err = env.Client.Get(env.Ctx, endpointNamespacedName,
-			endpoint)
+		rwServiceName := clusterName + "-rw"
+		endpointSlice, err := testsUtils.GetEndpointSliceByServiceName(env.Ctx, env.Client, namespace, rwServiceName)
 		Expect(err).ToNot(HaveOccurred())
-		err = env.Client.Get(env.Ctx, podNamespacedName, pod)
-		Expect(testsUtils.FirstEndpointIP(endpoint), err).To(
-			BeEquivalentTo(pod.Status.PodIP))
+
+		pod := &corev1.Pod{}
+		podName := clusterName + "-1"
+		err = env.Client.Get(env.Ctx, types.NamespacedName{Namespace: namespace, Name: podName}, pod)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(testsUtils.FirstEndpointSliceIP(endpointSlice)).To(BeEquivalentTo(pod.Status.PodIP))
 	})
 
 	By("preparing the db for the test scenario", func() {
@@ -1291,6 +1269,9 @@ func AssertFastFailOver(
 		_, _, err = run.Run("kubectl create -n " + namespace +
 			" -f " + webTestFile)
 		Expect(err).ToNot(HaveOccurred())
+
+		webtestDeploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "webtest", Namespace: namespace}}
+		Expect(deployments.WaitForReady(env.Ctx, env.Client, webtestDeploy, 60)).To(Succeed())
 
 		_, _, err = run.Run("kubectl create -n " + namespace +
 			" -f " + webTestJob)
@@ -2040,15 +2021,15 @@ func switchWalAndGetLatestArchive(namespace, podName string) string {
 
 func createAndAssertPgBouncerPoolerIsSetUp(namespace, poolerYamlFilePath string, expectedInstanceCount int) {
 	CreateResourceFromFile(namespace, poolerYamlFilePath)
-	Eventually(func() (int32, error) {
+	Eventually(func(g Gomega) {
 		poolerName, err := yaml.GetResourceNameFromYAML(env.Scheme, poolerYamlFilePath)
-		Expect(err).ToNot(HaveOccurred())
+		g.Expect(err).ToNot(HaveOccurred())
 		// Wait for the deployment to be ready
 		deployment := &appsv1.Deployment{}
 		err = env.Client.Get(env.Ctx, types.NamespacedName{Namespace: namespace, Name: poolerName}, deployment)
-
-		return deployment.Status.ReadyReplicas, err
-	}, 300).Should(BeEquivalentTo(expectedInstanceCount))
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(deployment.Status.ReadyReplicas).To(BeEquivalentTo(expectedInstanceCount))
+	}, 300).Should(Succeed())
 
 	// check pooler pod is up and running
 	assertPGBouncerPodsAreReady(namespace, poolerYamlFilePath, expectedInstanceCount)
@@ -2059,41 +2040,31 @@ func assertPgBouncerPoolerDeploymentStrategy(
 	expectedMaxSurge, expectedMaxUnavailable string,
 ) {
 	By("verify pooler deployment has expected rolling update configuration", func() {
-		Eventually(func() bool {
+		Eventually(func(g Gomega) {
 			poolerName, err := yaml.GetResourceNameFromYAML(env.Scheme, poolerYamlFilePath)
-			Expect(err).ToNot(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 			// Wait for the deployment to be ready
 			deployment := &appsv1.Deployment{}
 			err = env.Client.Get(env.Ctx, types.NamespacedName{Namespace: namespace, Name: poolerName}, deployment)
-			if err != nil {
-				return false
-			}
-			if expectedMaxSurge == deployment.Spec.Strategy.RollingUpdate.MaxSurge.String() &&
-				expectedMaxUnavailable == deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.String() {
-				return true
-			}
-			return false
-		}, 300).Should(BeTrue())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(deployment.Spec.Strategy.RollingUpdate.MaxSurge.String()).To(BeEquivalentTo(expectedMaxSurge))
+			g.Expect(deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.String()).To(BeEquivalentTo(expectedMaxUnavailable))
+		}, 300).Should(Succeed())
 	})
 }
 
 // assertPGBouncerPodsAreReady verifies if PGBouncer pooler pods are ready
 func assertPGBouncerPodsAreReady(namespace, poolerYamlFilePath string, expectedPodCount int) {
-	Eventually(func() (bool, error) {
+	Eventually(func(g Gomega) {
 		poolerName, err := yaml.GetResourceNameFromYAML(env.Scheme, poolerYamlFilePath)
-		Expect(err).ToNot(HaveOccurred())
+		g.Expect(err).ToNot(HaveOccurred())
 		podList := &corev1.PodList{}
 		err = env.Client.List(env.Ctx, podList, ctrlclient.InNamespace(namespace),
 			ctrlclient.MatchingLabels{utils.PgbouncerNameLabel: poolerName})
-		if err != nil {
-			return false, err
-		}
+		g.Expect(err).ToNot(HaveOccurred())
 
 		podItemsCount := len(podList.Items)
-		if podItemsCount != expectedPodCount {
-			return false, fmt.Errorf("expected pgBouncer pods count match passed expected instance count. "+
-				"Got: %v, Expected: %v", podItemsCount, expectedPodCount)
-		}
+		g.Expect(podItemsCount).To(BeEquivalentTo(expectedPodCount))
 
 		activeAndReadyPodCount := 0
 		for _, item := range podList.Items {
@@ -2102,14 +2073,8 @@ func assertPGBouncerPodsAreReady(namespace, poolerYamlFilePath string, expectedP
 			}
 			continue
 		}
-
-		if activeAndReadyPodCount != expectedPodCount {
-			return false, fmt.Errorf("expected pgBouncer pods to be all active and ready. Got: %v, Expected: %v",
-				activeAndReadyPodCount, expectedPodCount)
-		}
-
-		return true, nil
-	}, 90).Should(BeTrue())
+		g.Expect(activeAndReadyPodCount).To(BeEquivalentTo(expectedPodCount))
+	}, 90).Should(Succeed())
 }
 
 func assertReadWriteConnectionUsingPgBouncerService(
@@ -2168,7 +2133,7 @@ func assertPodIsRecreated(namespace, poolerSampleFile string) {
 			}
 			if len(podList.Items) == 1 {
 				if utils.IsPodActive(podList.Items[0]) && utils.IsPodReady(podList.Items[0]) {
-					if !(podNameBeforeDelete == podList.Items[0].GetName()) {
+					if podNameBeforeDelete != podList.Items[0].GetName() {
 						return true, err
 					}
 				}
@@ -2247,13 +2212,13 @@ func assertPGBouncerEndpointsContainsPodsIP(
 	poolerYamlFilePath string,
 	expectedPodCount int,
 ) {
-	var pgBouncerPods []*corev1.Pod
-	endpoint := &corev1.Endpoints{}
-	endpointName, err := yaml.GetResourceNameFromYAML(env.Scheme, poolerYamlFilePath)
+	poolerServiceName, err := yaml.GetResourceNameFromYAML(env.Scheme, poolerYamlFilePath)
 	Expect(err).ToNot(HaveOccurred())
 
+	endpointSlice := &discoveryv1.EndpointSlice{}
 	Eventually(func(g Gomega) {
-		err := env.Client.Get(env.Ctx, types.NamespacedName{Namespace: namespace, Name: endpointName}, endpoint)
+		var err error
+		endpointSlice, err = testsUtils.GetEndpointSliceByServiceName(env.Ctx, env.Client, namespace, poolerServiceName)
 		g.Expect(err).ToNot(HaveOccurred())
 	}).Should(Succeed())
 
@@ -2263,18 +2228,20 @@ func assertPGBouncerEndpointsContainsPodsIP(
 	err = env.Client.List(env.Ctx, podList, ctrlclient.InNamespace(namespace),
 		ctrlclient.MatchingLabels{utils.PgbouncerNameLabel: poolerName})
 	Expect(err).ToNot(HaveOccurred())
-	Expect(endpoint.Subsets).ToNot(BeEmpty())
+	Expect(endpointSlice.Endpoints).ToNot(BeEmpty())
 
-	for _, ip := range endpoint.Subsets[0].Addresses {
+	var pgBouncerPods []*corev1.Pod
+	for _, endpoint := range endpointSlice.Endpoints {
+		ip := endpoint.Addresses[0]
 		for podIndex, pod := range podList.Items {
-			if pod.Status.PodIP == ip.IP {
+			if pod.Status.PodIP == ip {
 				pgBouncerPods = append(pgBouncerPods, &podList.Items[podIndex])
 				continue
 			}
 		}
 	}
 
-	Expect(pgBouncerPods).Should(HaveLen(expectedPodCount), "Pod length or IP mismatch in ep")
+	Expect(pgBouncerPods).Should(HaveLen(expectedPodCount), "Pod length or IP mismatch in endpoint")
 }
 
 // assertPGBouncerHasServiceNameInsideHostParameter makes sure that the service name is contained inside the host file
@@ -2331,12 +2298,12 @@ func OnlineResizePVC(namespace, clusterName string) {
 		if walStorageEnabled {
 			expectedCount = 6
 		}
-		Eventually(func() int {
+		Eventually(func(g Gomega) {
 			// Variable counter to store the updated total of expanded PVCs. It should be equal to three
 			updateCount := 0
 			// Gathering PVC list
 			err := env.Client.List(env.Ctx, pvc, ctrlclient.InNamespace(namespace))
-			Expect(err).ToNot(HaveOccurred())
+			g.Expect(err).ToNot(HaveOccurred())
 			// Iterating through PVC list to compare with expanded size
 			for _, pvClaim := range pvc.Items {
 				// Size comparison
@@ -2344,8 +2311,8 @@ func OnlineResizePVC(namespace, clusterName string) {
 					updateCount++
 				}
 			}
-			return updateCount
-		}, 300).Should(BeEquivalentTo(expectedCount))
+			g.Expect(updateCount).To(BeEquivalentTo(expectedCount))
+		}, 300).Should(Succeed())
 	})
 }
 
@@ -2790,7 +2757,7 @@ func AssertReplicationSlotsOnPod(
 	isActiveOnPrimary bool,
 	isActiveOnReplica bool,
 ) {
-	GinkgoWriter.Println("checking contain slots:", expectedSlots, "for pod:", pod.Name)
+	GinkgoWriter.Println("Checking slots presence:", expectedSlots, "in pod:", pod.Name)
 	Eventually(func() ([]string, error) {
 		currentSlots, err := replicationslot.GetReplicationSlotsOnPod(
 			env.Ctx, env.Client, env.Interface, env.RestClientConfig,
@@ -2803,7 +2770,7 @@ func AssertReplicationSlotsOnPod(
 				namespace, clusterName, postgres.AppDBName)
 		})
 
-	GinkgoWriter.Println("executing replication slot assertion query on pod", pod.Name)
+	GinkgoWriter.Println("Verifying slots status for pod", pod.Name)
 
 	for _, slot := range expectedSlots {
 		query := fmt.Sprintf(

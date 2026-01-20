@@ -1,4 +1,11 @@
+---
+id: samples
+sidebar_position: 510
+title: Examples
+---
+
 # Examples
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 The examples show configuration files for setting up
 your PostgreSQL cluster.

@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -224,38 +227,27 @@ var _ = Describe("Rolling updates", Label(tests.LabelPostgresConfiguration), fun
 		Expect(err).ToNot(HaveOccurred())
 
 		endpointName := clusterName + "-rw"
-		endpointNamespacedName := types.NamespacedName{
-			Namespace: namespace,
-			Name:      endpointName,
-		}
 		// we give 10 seconds to the apiserver to update the endpoint
 		timeout := 10
 		Eventually(func() (string, error) {
-			endpoint := &corev1.Endpoints{}
-			err := env.Client.Get(env.Ctx, endpointNamespacedName, endpoint)
-			return testsUtils.FirstEndpointIP(endpoint), err
+			endpointSlice, err := testsUtils.GetEndpointSliceByServiceName(env.Ctx, env.Client, namespace, endpointName)
+			return testsUtils.FirstEndpointSliceIP(endpointSlice), err
 		}, timeout).Should(BeEquivalentTo(currentPrimaryPod.Status.PodIP))
 	}
 
 	// Verify that the IPs of the podutils match the ones in the -r endpoint and
 	// that the amount of podutils is the expected one
 	AssertReadyEndpoint := func(namespace string, clusterName string, expectedEndpoints int) {
-		endpointName := clusterName + "-r"
-		endpoint := &corev1.Endpoints{}
-		endpointNamespacedName := types.NamespacedName{
-			Namespace: namespace,
-			Name:      endpointName,
-		}
-		err := env.Client.Get(env.Ctx, endpointNamespacedName,
-			endpoint)
+		readServiceName := clusterName + "-r"
+		endpointSlice, err := testsUtils.GetEndpointSliceByServiceName(env.Ctx, env.Client, namespace, readServiceName)
 		Expect(err).ToNot(HaveOccurred())
 		podList, err := clusterutils.ListPods(env.Ctx, env.Client, namespace, clusterName)
 		Expect(expectedEndpoints, err).To(BeEquivalentTo(len(podList.Items)))
 		matchingIP := 0
 		for _, pod := range podList.Items {
 			ip := pod.Status.PodIP
-			for _, addr := range endpoint.Subsets[0].Addresses {
-				if ip == addr.IP {
+			for _, endpoint := range endpointSlice.Endpoints {
+				if ip == endpoint.Addresses[0] {
 					matchingIP++
 				}
 			}

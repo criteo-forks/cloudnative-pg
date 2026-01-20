@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package postgres
@@ -25,8 +28,6 @@ import (
 	"strings"
 	"text/template"
 	"time"
-
-	"github.com/cloudnative-pg/machinery/pkg/postgres/version"
 )
 
 // WalLevelValue a value that is assigned to the 'wal_level' configuration field
@@ -45,8 +46,8 @@ const (
 	// ParameterWalLogHints the configuration key containing the wal_log_hints value
 	ParameterWalLogHints = "wal_log_hints"
 
-	// ParameterRecoveyMinApplyDelay is the configuration key containing the recovery_min_apply_delay parameter
-	ParameterRecoveyMinApplyDelay = "recovery_min_apply_delay"
+	// ParameterRecoveryMinApplyDelay is the configuration key containing the recovery_min_apply_delay parameter
+	ParameterRecoveryMinApplyDelay = "recovery_min_apply_delay"
 )
 
 // An acceptable wal_level value
@@ -246,16 +247,13 @@ var hbaTemplate = template.Must(template.New("pg_hba.conf").Parse(hbaTemplateStr
 // identTemplate is the template used to create the HBA configuration
 var identTemplate = template.Must(template.New("pg_ident.conf").Parse(identTemplateString))
 
-// MajorVersionRangeUnlimited is used to represent an unbound limit in a MajorVersionRange
-var MajorVersionRangeUnlimited = version.Data{}
+// MajorVersionRange represents a range of PostgreSQL major versions.
+type MajorVersionRange struct {
+	// Min is the inclusive lower bound of the PostgreSQL major version range.
+	Min int
 
-// VersionRange is used to represent a range of PostgreSQL versions
-type VersionRange struct {
-	// The minimum limit of PostgreSQL major version, extreme included
-	Min version.Data
-
-	// The maximum limit of PostgreSQL version, extreme excluded, or MajorVersionRangeUnlimited
-	Max version.Data
+	// Max is the exclusive upper bound of the PostgreSQL major version range.
+	Max int
 }
 
 // SettingsCollection is a collection of PostgreSQL settings
@@ -271,7 +269,7 @@ type ConfigurationSettings struct {
 
 	// The following settings are like GlobalPostgresSettings
 	// but are relative only to certain PostgreSQL versions
-	DefaultSettings map[VersionRange]SettingsCollection
+	DefaultSettings map[MajorVersionRange]SettingsCollection
 
 	// The following settings are applied to the final PostgreSQL configuration,
 	// even if the user specified something different
@@ -291,7 +289,7 @@ type ConfigurationInfo struct {
 	Settings ConfigurationSettings
 
 	// The PostgreSQL version
-	Version version.Data
+	MajorVersion int
 
 	// The list of user-level settings
 	UserSettings map[string]string
@@ -356,8 +354,8 @@ type ManagedExtension struct {
 	SkipCreateExtension bool
 }
 
-// IsUsed checks whether a configuration namespace in the namespaces list
-// is used in the user provided configuration
+// IsUsed checks whether a configuration namespace in the extension namespaces list
+// is used in the user-provided configuration
 func (e ManagedExtension) IsUsed(userConfigs map[string]string) bool {
 	for k := range userConfigs {
 		for _, namespace := range e.Namespaces {
@@ -472,64 +470,52 @@ var (
 	CnpgConfigurationSettings = ConfigurationSettings{
 		GlobalDefaultSettings: SettingsCollection{
 			"archive_timeout":            "5min",
+			"dynamic_shared_memory_type": "posix",
 			"full_page_writes":           "on",
-			"max_parallel_workers":       "32",
-			"max_worker_processes":       "32",
-			"max_replication_slots":      "32",
 			"logging_collector":          "on",
 			"log_destination":            "csvlog",
+			"log_directory":              LogPath,
+			"log_filename":               LogFileName,
 			"log_rotation_age":           "0",
 			"log_rotation_size":          "0",
 			"log_truncate_on_rotation":   "false",
-			"log_directory":              LogPath,
-			"log_filename":               LogFileName,
-			"dynamic_shared_memory_type": "posix",
-			"wal_sender_timeout":         "5s",
-			"wal_receiver_timeout":       "5s",
+			"max_parallel_workers":       "32",
+			"max_worker_processes":       "32",
+			"max_replication_slots":      "32",
+			"shared_memory_type":         "mmap",
+			"ssl_max_protocol_version":   "TLSv1.3",
+			"ssl_min_protocol_version":   "TLSv1.3",
+			"wal_keep_size":              "512MB",
 			"wal_level":                  "logical",
 			ParameterWalLogHints:         "on",
+			"wal_sender_timeout":         "5s",
+			"wal_receiver_timeout":       "5s",
 			// Workaround for PostgreSQL not behaving correctly when
 			// a default value is not explicit in the postgresql.conf and
 			// the parameter cannot be changed without a restart.
 			SharedPreloadLibraries: "",
 		},
-		DefaultSettings: map[VersionRange]SettingsCollection{
-			{MajorVersionRangeUnlimited, version.New(12, 0)}: {
-				"wal_keep_segments": "32",
-			},
-			{version.New(12, 0), version.New(13, 0)}: {
-				"wal_keep_segments":  "32",
-				"shared_memory_type": "mmap",
-			},
-			{version.New(13, 0), MajorVersionRangeUnlimited}: {
-				"wal_keep_size":      "512MB",
-				"shared_memory_type": "mmap",
-			},
-			{version.New(12, 0), MajorVersionRangeUnlimited}: {
-				"ssl_max_protocol_version": "TLSv1.3",
-				"ssl_min_protocol_version": "TLSv1.3",
-			},
-		},
 		MandatorySettings: SettingsCollection{
-			"listen_addresses":        "*",
-			"unix_socket_directories": SocketDirectory,
-			"hot_standby":             "true",
 			"archive_command": fmt.Sprintf(
 				"/controller/manager wal-archive --log-destination %s/%s.json %%p",
 				LogPath, LogFileName),
-			"port":                fmt.Sprint(ServerPort),
-			"ssl":                 "on",
-			"ssl_cert_file":       ServerCertificateLocation,
-			"ssl_key_file":        ServerKeyLocation,
-			"ssl_ca_file":         ClientCACertificateLocation,
-			"restart_after_crash": "false",
+			"hot_standby":             "true",
+			"listen_addresses":        "*",
+			"port":                    fmt.Sprint(ServerPort),
+			"restart_after_crash":     "false",
+			"ssl":                     "on",
+			"ssl_cert_file":           ServerCertificateLocation,
+			"ssl_key_file":            ServerKeyLocation,
+			"ssl_ca_file":             ClientCACertificateLocation,
+			"unix_socket_directories": SocketDirectory,
 		},
 	}
 )
 
 // CreateHBARules will create the content of pg_hba.conf file given
 // the rules set by the cluster spec
-func CreateHBARules(hba []string,
+func CreateHBARules(
+	hba []string,
 	defaultAuthenticationMethod, ldapConfigString string,
 ) (string, error) {
 	var hbaContent bytes.Buffer
@@ -651,7 +637,7 @@ func CreatePostgresqlConfiguration(info ConfigurationInfo) *PgConfiguration {
 			configuration.OverwriteConfig(key, value)
 		}
 
-		if info.Version.Major() >= 17 {
+		if info.MajorVersion >= 17 {
 			configuration.OverwriteConfig("allow_alter_system", info.getAlterSystemEnabledValue())
 		}
 	}
@@ -690,7 +676,7 @@ func CreatePostgresqlConfiguration(info ConfigurationInfo) *PgConfiguration {
 		// primary and on the replicas, setting it on both
 		// is a safe approach.
 		configuration.OverwriteConfig(
-			ParameterRecoveyMinApplyDelay,
+			ParameterRecoveryMinApplyDelay,
 			fmt.Sprintf("%vs", math.Floor(info.RecoveryMinApplyDelay.Seconds())))
 	}
 
@@ -720,14 +706,9 @@ func setDefaultConfigurations(info ConfigurationInfo, configuration *PgConfigura
 
 	// apply settings relative to a certain PostgreSQL version
 	for constraints, settings := range info.Settings.DefaultSettings {
-		if constraints.Min == MajorVersionRangeUnlimited ||
-			constraints.Min == info.Version ||
-			constraints.Min.Less(info.Version) {
-			if constraints.Max == MajorVersionRangeUnlimited ||
-				info.Version.Less(constraints.Max) {
-				for key, value := range settings {
-					configuration.OverwriteConfig(key, value)
-				}
+		if constraints.Min <= info.MajorVersion && info.MajorVersion < constraints.Max {
+			for key, value := range settings {
+				configuration.OverwriteConfig(key, value)
 			}
 		}
 	}

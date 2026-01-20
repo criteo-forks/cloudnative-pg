@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package controller
@@ -20,7 +23,7 @@ import (
 	"context"
 	"time"
 
-	volumesnapshot "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -103,6 +106,7 @@ var _ = Describe("backup_controller barmanObjectStore unit tests", func() {
 				Phase: corev1.PodRunning,
 				ContainerStatuses: []corev1.ContainerStatus{
 					{
+						Name:        "postgres",
 						ContainerID: containerID,
 					},
 				},
@@ -262,7 +266,7 @@ var _ = Describe("backup_controller volumeSnapshot unit tests", func() {
 var _ = Describe("update snapshot backup metadata", func() {
 	var (
 		env           *testingEnvironment
-		snapshots     volumesnapshot.VolumeSnapshotList
+		snapshots     volumesnapshotv1.VolumeSnapshotList
 		cluster       *apiv1.Cluster
 		now           = metav1.NewTime(time.Now().Local().Truncate(time.Second))
 		oneHourAgo    = metav1.NewTime(now.Add(-1 * time.Hour))
@@ -282,8 +286,8 @@ var _ = Describe("update snapshot backup metadata", func() {
 				TargetPrimary: "cluster-example-2",
 			},
 		}
-		snapshots = volumesnapshot.VolumeSnapshotList{
-			Items: []volumesnapshot.VolumeSnapshot{
+		snapshots = volumesnapshotv1.VolumeSnapshotList{
+			Items: []volumesnapshotv1.VolumeSnapshot{
 				{ObjectMeta: metav1.ObjectMeta{
 					Name:      "snapshot-0",
 					Namespace: namespace,
@@ -333,9 +337,13 @@ var _ = Describe("update snapshot backup metadata", func() {
 	})
 
 	It("should update cluster with no metadata", func(ctx context.Context) {
+		//nolint:staticcheck
 		Expect(cluster.Status.FirstRecoverabilityPoint).To(BeEmpty())
+		//nolint:staticcheck
 		Expect(cluster.Status.FirstRecoverabilityPointByMethod).To(BeEmpty())
+		//nolint:staticcheck
 		Expect(cluster.Status.LastSuccessfulBackup).To(BeEmpty())
+		//nolint:staticcheck
 		Expect(cluster.Status.LastSuccessfulBackupByMethod).To(BeEmpty())
 		fakeClient := fake.NewClientBuilder().WithScheme(schemeBuilder.BuildWithAllKnownScheme()).
 			WithObjects(cluster).
@@ -351,24 +359,34 @@ var _ = Describe("update snapshot backup metadata", func() {
 			Name:      cluster.Name,
 		}, &updatedCluster)
 		Expect(err).ToNot(HaveOccurred())
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPoint).To(Equal(twoHoursAgo.Format(time.RFC3339)))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPointByMethod).
 			ToNot(HaveKey(apiv1.BackupMethodBarmanObjectStore))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPointByMethod[apiv1.BackupMethodVolumeSnapshot]).
 			To(Equal(twoHoursAgo))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackup).To(Equal(oneHourAgo.Format(time.RFC3339)))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackupByMethod).
 			ToNot(HaveKey(apiv1.BackupMethodBarmanObjectStore))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackupByMethod[apiv1.BackupMethodVolumeSnapshot]).
 			To(Equal(oneHourAgo))
 	})
 
 	It("should consider other methods when update the metadata", func(ctx context.Context) {
+		//nolint:staticcheck
 		cluster.Status.FirstRecoverabilityPoint = threeHoursAgo.Format(time.RFC3339)
+		//nolint:staticcheck
 		cluster.Status.FirstRecoverabilityPointByMethod = map[apiv1.BackupMethod]metav1.Time{
 			apiv1.BackupMethodBarmanObjectStore: threeHoursAgo,
 		}
+		//nolint:staticcheck
 		cluster.Status.LastSuccessfulBackup = now.Format(time.RFC3339)
+		//nolint:staticcheck
 		cluster.Status.LastSuccessfulBackupByMethod = map[apiv1.BackupMethod]metav1.Time{
 			apiv1.BackupMethodBarmanObjectStore: now,
 		}
@@ -386,25 +404,35 @@ var _ = Describe("update snapshot backup metadata", func() {
 			Name:      cluster.Name,
 		}, &updatedCluster)
 		Expect(err).ToNot(HaveOccurred())
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPoint).To(Equal(threeHoursAgo.Format(time.RFC3339)))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPointByMethod[apiv1.BackupMethodBarmanObjectStore]).
 			To(Equal(threeHoursAgo))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPointByMethod[apiv1.BackupMethodVolumeSnapshot]).
 			To(Equal(twoHoursAgo))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackup).To(Equal(now.Format(time.RFC3339)))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackupByMethod[apiv1.BackupMethodBarmanObjectStore]).
 			To(Equal(now))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackupByMethod[apiv1.BackupMethodVolumeSnapshot]).
 			To(Equal(oneHourAgo))
 	})
 
 	It("should override other method metadata when appropriate", func(ctx context.Context) {
+		//nolint:staticcheck
 		cluster.Status.FirstRecoverabilityPoint = oneHourAgo.Format(time.RFC3339)
+		//nolint:staticcheck
 		cluster.Status.FirstRecoverabilityPointByMethod = map[apiv1.BackupMethod]metav1.Time{
 			apiv1.BackupMethodBarmanObjectStore: oneHourAgo,
 			apiv1.BackupMethodVolumeSnapshot:    now,
 		}
+		//nolint:staticcheck
 		cluster.Status.LastSuccessfulBackup = oneHourAgo.Format(time.RFC3339)
+		//nolint:staticcheck
 		cluster.Status.LastSuccessfulBackupByMethod = map[apiv1.BackupMethod]metav1.Time{
 			apiv1.BackupMethodBarmanObjectStore: twoHoursAgo,
 			apiv1.BackupMethodVolumeSnapshot:    threeHoursAgo,
@@ -423,14 +451,20 @@ var _ = Describe("update snapshot backup metadata", func() {
 			Name:      cluster.Name,
 		}, &updatedCluster)
 		Expect(err).ToNot(HaveOccurred())
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPoint).To(Equal(twoHoursAgo.Format(time.RFC3339)))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPointByMethod[apiv1.BackupMethodBarmanObjectStore]).
 			To(Equal(oneHourAgo))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.FirstRecoverabilityPointByMethod[apiv1.BackupMethodVolumeSnapshot]).
 			To(Equal(twoHoursAgo))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackup).To(Equal(oneHourAgo.Format(time.RFC3339)))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackupByMethod[apiv1.BackupMethodBarmanObjectStore]).
 			To(Equal(twoHoursAgo))
+		//nolint:staticcheck
 		Expect(updatedCluster.Status.LastSuccessfulBackupByMethod[apiv1.BackupMethodVolumeSnapshot]).
 			To(Equal(oneHourAgo))
 	})

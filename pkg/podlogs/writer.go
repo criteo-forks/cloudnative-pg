@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package podlogs contains code to fetch logs from Kubernetes pods
@@ -66,22 +69,26 @@ func (spl *Writer) sendLogsToWriter(
 	writer io.Writer,
 	options *corev1.PodLogOptions,
 ) error {
-	request := spl.Client.CoreV1().Pods(spl.Pod.Namespace).GetLogs(spl.Pod.Name, options)
-
 	if options.Previous {
 		jsWriter := json.NewEncoder(writer)
 		if err := jsWriter.Encode("====== Beginning of Previous Log ====="); err != nil {
 			return err
 		}
 		// getting the Previous logs can fail (as with `kubectl logs -p`). Don't error out
-		if err := executeGetLogRequest(ctx, request, writer); err != nil {
+		previousOpts := options.DeepCopy()
+		previousRequest := spl.Client.CoreV1().Pods(spl.Pod.Namespace).GetLogs(spl.Pod.Name, previousOpts)
+		if err := executeGetLogRequest(ctx, previousRequest, writer); err != nil {
 			// we try to print the json-safe error message. We don't exit on error
 			_ = json.NewEncoder(writer).Encode("Error fetching previous logs: " + err.Error())
 		}
 		if err := jsWriter.Encode("====== End of Previous Log ====="); err != nil {
 			return err
 		}
+		// Now fetch current logs with Previous set to false
+		options.Previous = false
 	}
+
+	request := spl.Client.CoreV1().Pods(spl.Pod.Namespace).GetLogs(spl.Pod.Name, options)
 	return executeGetLogRequest(ctx, request, writer)
 }
 
@@ -104,7 +111,7 @@ func (spl *Writer) Multiple(
 		containerOpts := opts.DeepCopy()
 		containerOpts.Container = container.Name
 
-		if err := spl.sendLogsToWriter(ctx, writer, opts); err != nil {
+		if err := spl.sendLogsToWriter(ctx, writer, containerOpts); err != nil {
 			return err
 		}
 	}

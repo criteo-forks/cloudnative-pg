@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package controller
@@ -25,7 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	v1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	schemeBuilder "github.com/cloudnative-pg/cloudnative-pg/internal/scheme"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 
@@ -40,7 +43,7 @@ var _ = Describe("pooler_controller unit tests", func() {
 	})
 
 	It("should make sure that getPoolersUsingSecret works correctly", func() {
-		var poolers []v1.Pooler
+		var poolers []apiv1.Pooler
 		var expectedContent []types.NamespacedName
 		var nonExpectedContent []types.NamespacedName
 		var expectedAuthSecretName string
@@ -54,7 +57,7 @@ var _ = Describe("pooler_controller unit tests", func() {
 
 			pooler2 := *newFakePooler(env.client, cluster)
 			pooler3 := *newFakePooler(env.client, cluster)
-			for _, expectedPooler := range []v1.Pooler{pooler1, pooler2, pooler3} {
+			for _, expectedPooler := range []apiv1.Pooler{pooler1, pooler2, pooler3} {
 				poolers = append(poolers, expectedPooler)
 				expectedContent = append(
 					expectedContent,
@@ -72,7 +75,7 @@ var _ = Describe("pooler_controller unit tests", func() {
 		})
 
 		By("making sure only expected poolers are fetched", func() {
-			poolerList := v1.PoolerList{Items: poolers}
+			poolerList := apiv1.PoolerList{Items: poolers}
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      expectedAuthSecretName,
@@ -92,7 +95,7 @@ var _ = Describe("pooler_controller unit tests", func() {
 
 		pooler1 := *newFakePooler(env.client, cluster)
 		pooler2 := *newFakePooler(env.client, cluster)
-		poolerList := v1.PoolerList{Items: []v1.Pooler{pooler1, pooler2}}
+		poolerList := apiv1.PoolerList{Items: []apiv1.Pooler{pooler1, pooler2}}
 
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
@@ -126,7 +129,7 @@ var _ = Describe("pooler_controller unit tests", func() {
 			pooler2 := *newFakePooler(env.client, cluster)
 			expectedAuthSecretName = pooler1.GetAuthQuerySecretName()
 
-			for _, expectedPooler := range []v1.Pooler{pooler1, pooler2} {
+			for _, expectedPooler := range []apiv1.Pooler{pooler1, pooler2} {
 				request := reconcile.Request{
 					NamespacedName: types.NamespacedName{
 						Name:      expectedPooler.Name,
@@ -139,7 +142,7 @@ var _ = Describe("pooler_controller unit tests", func() {
 
 		By("creating pooler with a different secret that should be skipped", func() {
 			pooler3 := *newFakePooler(env.client, cluster)
-			pooler3.Spec.PgBouncer.AuthQuerySecret = &v1.LocalObjectReference{
+			pooler3.Spec.PgBouncer.AuthQuerySecret = &apiv1.LocalObjectReference{
 				Name: "test-one",
 			}
 			pooler3.Spec.PgBouncer.AuthQuery = "SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename=$1"

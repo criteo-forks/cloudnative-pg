@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -19,6 +22,7 @@ package e2e
 import (
 	"github.com/cloudnative-pg/cloudnative-pg/tests"
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/operator"
+	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/timeouts"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -35,10 +39,11 @@ var _ = Describe("PostgreSQL operator deployment", Label(tests.LabelBasic, tests
 
 	It("sets up the operator", func() {
 		By("having a pod for the operator in state ready", func() {
-			AssertOperatorIsReady(env.Ctx, env.Client, env.Interface)
+			Expect(operator.WaitForReady(env.Ctx, env.Client, uint(testTimeouts[timeouts.OperatorIsReady]),
+				true)).Should(Succeed())
 		})
 		By("having a deployment for the operator in state ready", func() {
-			ready, err := operator.IsDeploymentReady(env.Ctx, env.Client)
+			ready, err := operator.IsReady(env.Ctx, env.Client, true)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(ready).To(BeTrue())
 		})

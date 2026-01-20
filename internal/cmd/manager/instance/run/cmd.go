@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,9 +13,10 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
-// Package run implements the "instance run" subcommand of the operator
 package run
 
 import (
@@ -31,10 +33,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -53,6 +57,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver/metricserver"
 	pg "github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
+	instancestorage "github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/instance/storage"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 )
 
@@ -75,6 +80,7 @@ func NewCmd() *cobra.Command {
 	var podName string
 	var clusterName string
 	var namespace string
+	var pprofHTTPServer bool
 	var statusPortTLS bool
 	var metricsPortTLS bool
 
@@ -91,6 +97,9 @@ func NewCmd() *cobra.Command {
 				cmd.Context(),
 				log.GetLogger().WithValues("logger", "instance-manager"),
 			)
+
+			checkCurrentOSRelease(ctx)
+
 			instance := postgres.NewInstance().
 				WithPodName(podName).
 				WithClusterName(clusterName).
@@ -100,8 +109,14 @@ func NewCmd() *cobra.Command {
 			instance.StatusPortTLS = statusPortTLS
 			instance.MetricsPortTLS = metricsPortTLS
 
+			// Since version 0.19.0 of controller-runtime, it is not allowed to create multiple controllers with the
+			// same name. As this part of the code is run inside a retry block, we need to allow SkipNameValidation
+			// only on retries, because a previous run may have already created a controller
+			// Reference https://github.com/kubernetes-sigs/controller-runtime/releases/tag/v0.19.0
+			var skipNameValidation bool
 			err := retry.OnError(retry.DefaultRetry, isRunSubCommandRetryable, func() error {
-				return runSubCommand(ctx, instance)
+				defer func() { skipNameValidation = true }()
+				return runSubCommand(ctx, instance, pprofHTTPServer, skipNameValidation)
 			})
 
 			if errors.Is(err, errNoFreeWALSpace) {
@@ -126,6 +141,12 @@ func NewCmd() *cobra.Command {
 		"current cluster in k8s, used to coordinate switchover and failover")
 	cmd.Flags().StringVar(&namespace, "namespace", os.Getenv("NAMESPACE"), "The namespace of "+
 		"the cluster and of the Pod in k8s")
+	cmd.Flags().BoolVar(
+		&pprofHTTPServer,
+		"pprof-server",
+		false,
+		"If true it will start a pprof debug http server on localhost:6060. Defaults to false.",
+	)
 	cmd.Flags().BoolVar(&statusPortTLS, "status-port-tls", false,
 		"Enable TLS for communicating with the operator")
 	cmd.Flags().BoolVar(&metricsPortTLS, "metrics-port-tls", false,
@@ -133,13 +154,19 @@ func NewCmd() *cobra.Command {
 	return cmd
 }
 
-func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
+func runSubCommand( //nolint:gocognit,gocyclo
+	ctx context.Context,
+	instance *postgres.Instance,
+	pprofServer bool,
+	skipNameValidation bool,
+) error {
 	var err error
 
 	contextLogger := log.FromContext(ctx)
 	contextLogger.Info("Starting CloudNativePG Instance Manager",
 		"version", versions.Version,
-		"build", versions.Info)
+		"build", versions.Info,
+		"skipNameValidation", skipNameValidation)
 
 	contextLogger.Info("Checking for free disk space for WALs before starting PostgreSQL")
 	hasDiskSpaceForWals, err := instance.CheckHasDiskSpaceForWAL(ctx)
@@ -196,7 +223,11 @@ func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
 		BaseContext: func() context.Context {
 			return ctx
 		},
-		Logger: contextLogger.WithValues("logging_pod", os.Getenv("POD_NAME")).GetLogger(),
+		Logger:           contextLogger.WithValues("logging_pod", os.Getenv("POD_NAME")).GetLogger(),
+		PprofBindAddress: getPprofServerAddress(pprofServer),
+		Controller: ctrlconfig.Controller{
+			SkipNameValidation: ptr.To(skipNameValidation),
+		},
 	})
 	if err != nil {
 		contextLogger.Error(err, "unable to set up overall controller manager")
@@ -242,6 +273,7 @@ func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
 	// postgres CSV logs handler (PGAudit too)
 	postgresLogPipe := logpipe.NewLogPipe()
 	if err := mgr.Add(postgresLogPipe); err != nil {
+		contextLogger.Error(err, "unable to add CSV logs handler")
 		return err
 	}
 	postgresStartConditions = append(postgresStartConditions, postgresLogPipe.GetInitializedCondition())
@@ -251,6 +283,7 @@ func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
 	rawPipe := logpipe.NewRawLineLogPipe(filepath.Join(pg.LogPath, pg.LogFileName),
 		logpipe.LoggingCollectorRecordName)
 	if err := mgr.Add(rawPipe); err != nil {
+		contextLogger.Error(err, "unable to add raw logs handler")
 		return err
 	}
 	postgresStartConditions = append(postgresStartConditions, rawPipe.GetExecutedCondition())
@@ -259,12 +292,14 @@ func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
 	// json logs handler
 	jsonPipe := logpipe.NewJSONLineLogPipe(filepath.Join(pg.LogPath, pg.LogFileName+".json"))
 	if err := mgr.Add(jsonPipe); err != nil {
+		contextLogger.Error(err, "unable to add JSON logs handler")
 		return err
 	}
 	postgresStartConditions = append(postgresStartConditions, jsonPipe.GetExecutedCondition())
 	exitedConditions = append(exitedConditions, jsonPipe.GetExitedCondition())
 
-	if err := reconciler.ReconcileWalStorage(ctx); err != nil {
+	if err := instancestorage.ReconcileWalDirectory(ctx); err != nil {
+		contextLogger.Error(err, "unable to move `pg_wal` directory to the attached volume")
 		return err
 	}
 
@@ -301,6 +336,7 @@ func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
 	defer onlineUpgradeCancelFunc()
 	remoteSrv, err := webserver.NewRemoteWebServer(instance, onlineUpgradeCancelFunc, exitedConditions)
 	if err != nil {
+		contextLogger.Error(err, "unable to create remote webserver runnable")
 		return err
 	}
 	if err = mgr.Add(remoteSrv); err != nil {
@@ -314,6 +350,7 @@ func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
 		mgr.GetEventRecorderFor("local-webserver"),
 	)
 	if err != nil {
+		contextLogger.Error(err, "unable to create local webserver runnable")
 		return err
 	}
 	if err = mgr.Add(localSrv); err != nil {
@@ -323,10 +360,11 @@ func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
 
 	metricsServer, err := metricserver.New(instance, metricsExporter)
 	if err != nil {
+		contextLogger.Error(err, "unable to create metrics server runnable")
 		return err
 	}
 	if err = mgr.Add(metricsServer); err != nil {
-		contextLogger.Error(err, "unable to add local webserver runnable")
+		contextLogger.Error(err, "unable to add metrics server runnable")
 		return err
 	}
 
@@ -360,4 +398,12 @@ func runSubCommand(ctx context.Context, instance *postgres.Instance) error {
 	}
 
 	return nil
+}
+
+func getPprofServerAddress(enabled bool) string {
+	if enabled {
+		return "0.0.0.0:6060"
+	}
+
+	return ""
 }

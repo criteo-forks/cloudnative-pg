@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package run contains functions to execute commands locally
@@ -48,7 +51,7 @@ func Unchecked(command string) (stdout string, stderr string, err error) {
 	if err != nil {
 		err = fmt.Errorf("%w - %v", err, stderr)
 	}
-	return
+	return stdout, stderr, err
 }
 
 // UncheckedRetry executes a command and process the information with retry
@@ -76,7 +79,7 @@ func UncheckedRetry(command string) (stdout string, stderr string, err error) {
 	if err != nil {
 		err = fmt.Errorf("%w - %v", err, stderr)
 	}
-	return
+	return stdout, stderr, err
 }
 
 // Run executes a command and prints the output when terminates with an error
@@ -88,5 +91,5 @@ func Run(command string) (stdout string, stderr string, err error) {
 		ginkgo.GinkgoWriter.Printf("RunCheck: %v\nExitCode: %v\n Out:\n%v\nErr:\n%v\n",
 			command, exerr.ExitCode(), stdout, stderr)
 	}
-	return
+	return stdout, stderr, err
 }

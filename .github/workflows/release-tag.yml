@@ -10,17 +10,19 @@ on:
     paths:
       - 'pkg/versions/versions.go'
 
+permissions: read-all
+
 jobs:
   tag:
     runs-on: ubuntu-24.04
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
       -
         name: Create tag
         if: github.event.pull_request.merged == true && startsWith(github.head_ref, 'release/v')
-        uses: christophebedard/tag-version-commit@v1.7.0
+        uses: christophebedard/tag-version-commit@57ffb155fc61c8ab098fcfa273469b532c1d4ce7 # v1.7.0
         with:
           token: ${{ secrets.REPO_GHA_PAT }}
           version_regex: '^Version tag to ([0-9]+\.[0-9]+\.[0-9]+(?:-[a-z][0-9a-z]*)?)'

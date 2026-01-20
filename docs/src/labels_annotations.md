@@ -1,4 +1,11 @@
-# Labels and annotations
+---
+id: labels_annotations
+sidebar_position: 290
+title: Labels and Annotations
+---
+
+# Labels and Annotations
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 Resources in Kubernetes are organized in a flat structure, with no hierarchical
 information or relationship between them. However, such resources and objects
@@ -63,6 +70,10 @@ CloudNativePG manages the following predefined labels:
 
 `cnpg.io/jobRole`
 : Role of the job (that is, `import`, `initdb`, `join`, ...)
+
+`cnpg.io/majorVersion`
+: Integer PostgreSQL major version of the backup's data directory (for example, `17`).
+This label is available only on `VolumeSnapshot` resources.
 
 `cnpg.io/onlineBackup`
 : Whether the backup is online (hot) or taken when Postgres is down (cold).
@@ -212,7 +223,7 @@ CloudNativePG manages the following predefined annotations:
 :   Contains the latest cluster `reload` time. `reload` is triggered by the user through a plugin.
 
 `cnpg.io/skipEmptyWalArchiveCheck`
-:   When set to `true` on a `Cluster` resource, the operator disables the check
+:   When set to `enabled` on a `Cluster` resource, the operator disables the check
     that ensures that the WAL archive is empty before writing data. Use at your own
     risk.
 
@@ -226,6 +237,18 @@ CloudNativePG manages the following predefined annotations:
 
 `cnpg.io/snapshotEndTime`
 :   The time a snapshot was marked as ready to use.
+
+`cnpg.io/validation`
+:   When set to `disabled` on a CloudNativePG-managed custom resource, the
+    validation webhook allows all changes without restriction.
+
+    **⚠️ WARNING:** Disabling validation may permit unsafe or destructive
+    operations. Use this setting with caution and at your own risk.
+
+`cnpg.io/volumeSnapshotDeadline`
+:   Applied to `Backup` and `ScheduledBackup` resources, allows you to control
+    how long the operator should retry recoverable errors before considering the
+    volume snapshot backup failed. In minutes, defaulting to 10.
 
 `kubectl.kubernetes.io/restartedAt`
 :   When available, the time of last requested restart of a Postgres cluster.

@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package promote implement the kubectl-cnpg promote command
@@ -22,7 +25,7 @@ import (
 	"fmt"
 
 	pgTime "github.com/cloudnative-pg/machinery/pkg/postgres/time"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -49,7 +52,7 @@ func Promote(ctx context.Context, cli client.Client,
 	}
 
 	// Check if the Pod exist
-	var pod v1.Pod
+	var pod corev1.Pod
 	err = cli.Get(ctx, client.ObjectKey{Namespace: namespace, Name: serverName}, &pod)
 	if err != nil {
 		return fmt.Errorf("new primary node %s not found in namespace %s: %w", serverName, namespace, err)
@@ -64,7 +67,7 @@ func Promote(ctx context.Context, cli client.Client,
 	}
 	if err := status.PatchWithOptimisticLock(ctx, cli, &cluster,
 		reconcileTargetPrimaryFunc,
-		status.SetClusterReadyConditionTX,
+		status.SetClusterReadyCondition,
 	); err != nil {
 		return err
 	}

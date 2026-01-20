@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package controller
@@ -255,7 +258,7 @@ func (r *ClusterReconciler) updateRestartAnnotation(
 			primaryPod.Annotations = make(map[string]string)
 		}
 		primaryPod.Annotations[utils.ClusterRestartAnnotationName] = clusterRestart
-		if err := r.Client.Patch(ctx, &primaryPod, client.MergeFrom(original)); err != nil {
+		if err := r.Patch(ctx, &primaryPod, client.MergeFrom(original)); err != nil {
 			return err
 		}
 	}
@@ -276,6 +279,7 @@ type rollout struct {
 }
 
 type rolloutChecker func(
+	ctx context.Context,
 	pod *corev1.Pod,
 	cluster *apiv1.Cluster,
 ) (rollout, error)
@@ -335,7 +339,7 @@ func isPodNeedingRollout(
 	contextLogger := log.FromContext(ctx)
 	applyCheckers := func(checkers map[string]rolloutChecker) rollout {
 		for message, check := range checkers {
-			podRollout, err := check(pod, cluster)
+			podRollout, err := check(ctx, pod, cluster)
 			if err != nil {
 				contextLogger.Error(err, "while checking if pod needs rollout")
 				continue
@@ -353,7 +357,6 @@ func isPodNeedingRollout(
 
 	checkers := map[string]rolloutChecker{
 		"pod has missing PVCs":                     checkHasMissingPVCs,
-		"pod has PVC requiring resizing":           checkHasResizingPVC,
 		"pod projected volume is outdated":         checkProjectedVolumeIsOutdated,
 		"pod image is outdated":                    checkPodImageIsOutdated,
 		"cluster has different restart annotation": checkClusterHasDifferentRestartAnnotation,
@@ -380,10 +383,10 @@ func isPodNeedingRollout(
 
 	// These checks are subsumed by the PodSpec checker
 	checkers = map[string]rolloutChecker{
-		"pod environment is outdated":    checkPodEnvironmentIsOutdated,
-		"pod scheduler is outdated":      checkSchedulerIsOutdated,
-		"pod needs updated topology":     checkPodNeedsUpdatedTopology,
-		"pod init container is outdated": checkPodInitContainerIsOutdated,
+		"pod environment is outdated":         checkPodEnvironmentIsOutdated,
+		"pod scheduler is outdated":           checkSchedulerIsOutdated,
+		"pod needs updated topology":          checkPodNeedsUpdatedTopology,
+		"pod bootstrap container is outdated": checkPodBootstrapImage,
 	}
 	podRollout = applyCheckers(checkers)
 	if podRollout.required {
@@ -395,7 +398,7 @@ func isPodNeedingRollout(
 
 // check if the pod has a valid podSpec
 func hasValidPodSpec(pod *corev1.Pod) bool {
-	podSpecAnnotation, hasStoredPodSpec := pod.ObjectMeta.Annotations[utils.PodSpecAnnotationName]
+	podSpecAnnotation, hasStoredPodSpec := pod.Annotations[utils.PodSpecAnnotationName]
 	if !hasStoredPodSpec {
 		return false
 	}
@@ -403,22 +406,7 @@ func hasValidPodSpec(pod *corev1.Pod) bool {
 	return err == nil
 }
 
-func checkHasResizingPVC(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
-	if configuration.Current.EnableAzurePVCUpdates {
-		for _, pvcName := range cluster.Status.ResizingPVC {
-			// This code works on the assumption that the PVC begins with the name of the pod using it.
-			if persistentvolumeclaim.BelongToInstance(cluster, pod.Name, pvcName) {
-				return rollout{
-					required: true,
-					reason:   fmt.Sprintf("rebooting pod to complete the resizing of the following PVC: '%s'", pvcName),
-				}, nil
-			}
-		}
-	}
-	return rollout{}, nil
-}
-
-func checkPodNeedsUpdatedTopology(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
+func checkPodNeedsUpdatedTopology(_ context.Context, pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
 	if reflect.DeepEqual(cluster.Spec.TopologySpreadConstraints, pod.Spec.TopologySpreadConstraints) {
 		return rollout{}, nil
 	}
@@ -432,7 +420,7 @@ func checkPodNeedsUpdatedTopology(pod *corev1.Pod, cluster *apiv1.Cluster) (roll
 	}, nil
 }
 
-func checkSchedulerIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
+func checkSchedulerIsOutdated(_ context.Context, pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
 	if cluster.Spec.SchedulerName == "" || cluster.Spec.SchedulerName == pod.Spec.SchedulerName {
 		return rollout{}, nil
 	}
@@ -447,7 +435,7 @@ func checkSchedulerIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout,
 	}, nil
 }
 
-func checkProjectedVolumeIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
+func checkProjectedVolumeIsOutdated(_ context.Context, pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
 	isNilOrZero := func(vs *corev1.ProjectedVolumeSource) bool {
 		return vs == nil || len(vs.Sources) == 0
 	}
@@ -490,8 +478,8 @@ func getProjectedVolumeConfigurationFromPod(pod corev1.Pod) *corev1.ProjectedVol
 	return nil
 }
 
-func checkPodImageIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
-	targetImageName := cluster.GetImageName()
+func checkPodImageIsOutdated(_ context.Context, pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
+	targetImageName := cluster.Status.Image
 
 	pgCurrentImageName, err := specs.GetPostgresImageName(*pod)
 	if err != nil {
@@ -510,7 +498,7 @@ func checkPodImageIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, 
 	}, nil
 }
 
-func checkPodInitContainerIsOutdated(pod *corev1.Pod, _ *apiv1.Cluster) (rollout, error) {
+func checkPodBootstrapImage(_ context.Context, pod *corev1.Pod, _ *apiv1.Cluster) (rollout, error) {
 	if configuration.Current.EnableInstanceManagerInplaceUpdates {
 		return rollout{}, nil
 	}
@@ -527,13 +515,13 @@ func checkPodInitContainerIsOutdated(pod *corev1.Pod, _ *apiv1.Cluster) (rollout
 	// We need to apply a different version of the instance manager
 	return rollout{
 		required: true,
-		reason: fmt.Sprintf("the instance is using an old init container image: %s -> %s",
+		reason: fmt.Sprintf("the instance is using an old bootstrap container image: %s -> %s",
 			opCurrentImageName, configuration.Current.OperatorImageName),
 		needsChangeOperatorImage: true,
 	}, nil
 }
 
-func checkHasMissingPVCs(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
+func checkHasMissingPVCs(_ context.Context, pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
 	if persistentvolumeclaim.InstanceHasMissingMounts(cluster, pod) {
 		return rollout{
 			required:             true,
@@ -544,7 +532,11 @@ func checkHasMissingPVCs(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, erro
 	return rollout{}, nil
 }
 
-func checkClusterHasDifferentRestartAnnotation(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
+func checkClusterHasDifferentRestartAnnotation(
+	_ context.Context,
+	pod *corev1.Pod,
+	cluster *apiv1.Cluster,
+) (rollout, error) {
 	// If the pod restart value doesn't match with the one contained in the cluster, restart the pod.
 	if clusterRestart, ok := cluster.Annotations[utils.ClusterRestartAnnotationName]; ok {
 		podRestart := pod.Annotations[utils.ClusterRestartAnnotationName]
@@ -560,7 +552,10 @@ func checkClusterHasDifferentRestartAnnotation(pod *corev1.Pod, cluster *apiv1.C
 	return rollout{}, nil
 }
 
-func checkPodEnvironmentIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
+// checkPodEnvironmentIsOutdated checks if the environment variables in the pod have changed.
+//
+// Deprecated: this function doesn't take into account plugin changes, use PodSpec annotation.
+func checkPodEnvironmentIsOutdated(_ context.Context, pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
 	// Check if there is a change in the environment section
 	envConfig := specs.CreatePodEnvConfig(*cluster, pod.Name)
 
@@ -605,8 +600,12 @@ func checkPodEnvironmentIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rol
 	return rollout{}, nil
 }
 
-func checkPodSpecIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, error) {
-	podSpecAnnotation, ok := pod.ObjectMeta.Annotations[utils.PodSpecAnnotationName]
+func checkPodSpecIsOutdated(
+	ctx context.Context,
+	pod *corev1.Pod,
+	cluster *apiv1.Cluster,
+) (rollout, error) {
+	podSpecAnnotation, ok := pod.Annotations[utils.PodSpecAnnotationName]
 	if !ok {
 		return rollout{}, nil
 	}
@@ -616,10 +615,18 @@ func checkPodSpecIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, e
 	if err != nil {
 		return rollout{}, fmt.Errorf("while unmarshaling the pod resources annotation: %w", err)
 	}
-	envConfig := specs.CreatePodEnvConfig(*cluster, pod.Name)
-	gracePeriod := int64(cluster.GetMaxStopDelay())
+
 	tlsEnabled := remote.GetStatusSchemeFromPod(pod).IsHTTPS()
-	targetPodSpec := specs.CreateClusterPodSpec(pod.Name, *cluster, envConfig, gracePeriod, tlsEnabled)
+
+	serial, err := utils.GetClusterSerialValue(pod.Annotations)
+	if err != nil {
+		return rollout{}, fmt.Errorf("while getting the pod serial value: %w", err)
+	}
+
+	targetPod, err := specs.NewInstance(ctx, *cluster, serial, tlsEnabled)
+	if err != nil {
+		return rollout{}, fmt.Errorf("while creating a new pod to check podSpec: %w", err)
+	}
 
 	// the bootstrap init-container could change image after an operator upgrade.
 	// If in-place upgrades of the instance manager are enabled, we don't need rollout.
@@ -631,17 +638,13 @@ func checkPodSpecIsOutdated(pod *corev1.Pod, cluster *apiv1.Cluster) (rollout, e
 		!configuration.Current.EnableInstanceManagerInplaceUpdates {
 		return rollout{
 			required: true,
-			reason: fmt.Sprintf("the instance is using an old init container image: %s -> %s",
+			reason: fmt.Sprintf("the instance is using an old bootstrap container image: %s -> %s",
 				opCurrentImageName, configuration.Current.OperatorImageName),
 			needsChangeOperatorImage: true,
 		}, nil
 	}
 
-	// from here we don't care about drift in the init containers: avoid checking them
-	storedPodSpec.InitContainers = nil
-	targetPodSpec.InitContainers = nil
-
-	match, diff := specs.ComparePodSpecs(storedPodSpec, targetPodSpec)
+	match, diff := specs.ComparePodSpecs(storedPodSpec, targetPod.Spec)
 	if !match {
 		return rollout{
 			required: true,
@@ -662,7 +665,7 @@ func (r *ClusterReconciler) upgradePod(
 ) error {
 	log.FromContext(ctx).Info("Recreating instance pod",
 		"pod", pod.Name,
-		"to", cluster.GetImageName(),
+		"to", cluster.Status.Image,
 		"reason", reason,
 	)
 

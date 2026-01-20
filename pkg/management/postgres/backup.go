@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package postgres
@@ -25,7 +28,6 @@ import (
 	"time"
 
 	barmanBackup "github.com/cloudnative-pg/barman-cloud/pkg/backup"
-	barmanCapabilities "github.com/cloudnative-pg/barman-cloud/pkg/capabilities"
 	barmanCatalog "github.com/cloudnative-pg/barman-cloud/pkg/catalog"
 	barmanCommand "github.com/cloudnative-pg/barman-cloud/pkg/command"
 	barmanCredentials "github.com/cloudnative-pg/barman-cloud/pkg/credentials"
@@ -33,7 +35,6 @@ import (
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	pgTime "github.com/cloudnative-pg/machinery/pkg/postgres/time"
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -65,7 +66,6 @@ type BackupCommand struct {
 	Env          []string
 	Log          log.Logger
 	Instance     *Instance
-	Capabilities *barmanCapabilities.Capabilities
 	barmanBackup *barmanBackup.Command
 }
 
@@ -79,11 +79,6 @@ func NewBarmanBackupCommand(
 	instance *Instance,
 	log log.Logger,
 ) (*BackupCommand, error) {
-	capabilities, err := barmanCapabilities.CurrentCapabilities()
-	if err != nil {
-		return nil, err
-	}
-
 	return &BackupCommand{
 		Cluster:      cluster,
 		Backup:       backup,
@@ -92,8 +87,7 @@ func NewBarmanBackupCommand(
 		Env:          os.Environ(),
 		Instance:     instance,
 		Log:          log,
-		Capabilities: capabilities,
-		barmanBackup: barmanBackup.NewBackupCommand(cluster.Spec.Backup.BarmanObjectStore, capabilities),
+		barmanBackup: barmanBackup.NewBackupCommand(cluster.Spec.Backup.BarmanObjectStore),
 	}, nil
 }
 
@@ -101,9 +95,6 @@ func NewBarmanBackupCommand(
 // barman-cloud-backup
 func (b *BackupCommand) Start(ctx context.Context) error {
 	contextLogger := log.FromContext(ctx)
-	if err := b.ensureCompatibility(); err != nil {
-		return err
-	}
 
 	b.setupBackupStatus()
 
@@ -142,15 +133,6 @@ func (b *BackupCommand) Start(ctx context.Context) error {
 	return nil
 }
 
-func (b *BackupCommand) ensureCompatibility() error {
-	postgresVers, err := b.Instance.GetPgVersion()
-	if err != nil {
-		return err
-	}
-
-	return b.barmanBackup.IsCompatible(postgresVers)
-}
-
 func (b *BackupCommand) retryWithRefreshedCluster(
 	ctx context.Context,
 	cb func() error,
@@ -172,36 +154,11 @@ func (b *BackupCommand) run(ctx context.Context) {
 	)
 
 	if err := b.takeBackup(ctx); err != nil {
-		backupStatus := b.Backup.GetStatus()
-
 		// record the failure
 		b.Log.Error(err, "Backup failed")
 		b.Recorder.Event(b.Backup, "Normal", "Failed", "Backup failed")
 
-		// update backup status as failed
-		backupStatus.SetAsFailed(err)
-		if err := PatchBackupStatusAndRetry(ctx, b.Client, b.Backup); err != nil {
-			b.Log.Error(err, "Can't mark backup as failed")
-			// We do not terminate here because we still want to do the maintenance
-			// activity on the backups and to set the condition on the cluster.
-		}
-
-		// add backup failed condition to the cluster
-		if failErr := b.retryWithRefreshedCluster(ctx, func() error {
-			return status.PatchWithOptimisticLock(
-				ctx,
-				b.Client,
-				b.Cluster,
-				func(cluster *apiv1.Cluster) {
-					meta.SetStatusCondition(&cluster.Status.Conditions, apiv1.BuildClusterBackupFailedCondition(err))
-					cluster.Status.LastFailedBackup = pgTime.GetCurrentTimestampWithFormat(time.RFC3339)
-				},
-			)
-		}); failErr != nil {
-			b.Log.Error(failErr, "while setting cluster condition for failed backup")
-			// We do not terminate here because it's more important to properly handle
-			// the backup maintenance activity than putting a condition in the cluster
-		}
+		_ = status.FlagBackupAsFailed(ctx, b.Client, b.Backup, b.Cluster, err)
 	}
 
 	b.backupMaintenance(ctx)
@@ -231,7 +188,6 @@ func (b *BackupCommand) takeBackup(ctx context.Context) error {
 		b.Backup.Status.BackupName,
 		backupStatus.ServerName,
 		b.Env,
-		b.Cluster,
 		postgres.BackupTemporaryDirectory,
 	)
 	if err != nil {
@@ -246,7 +202,7 @@ func (b *BackupCommand) takeBackup(ctx context.Context) error {
 	b.Backup.Status.SetAsCompleted()
 
 	barmanBackup, err := b.barmanBackup.GetExecutedBackupInfo(
-		ctx, b.Backup.Status.BackupName, backupStatus.ServerName, b.Cluster, b.Env)
+		ctx, b.Backup.Status.BackupName, backupStatus.ServerName, b.Env)
 	if err != nil {
 		return err
 	}
@@ -345,9 +301,7 @@ func (b *BackupCommand) setupBackupStatus() {
 	barmanConfiguration := b.Cluster.Spec.Backup.BarmanObjectStore
 	backupStatus := b.Backup.GetStatus()
 
-	if b.Capabilities.ShouldExecuteBackupWithName(b.Cluster) {
-		backupStatus.BackupName = fmt.Sprintf("backup-%v", pgTime.ToCompactISO8601(time.Now()))
-	}
+	backupStatus.BackupName = fmt.Sprintf("backup-%v", pgTime.ToCompactISO8601(time.Now()))
 	backupStatus.BarmanCredentials = barmanConfiguration.BarmanCredentials
 	backupStatus.EndpointCA = barmanConfiguration.EndpointCA
 	backupStatus.EndpointURL = barmanConfiguration.EndpointURL

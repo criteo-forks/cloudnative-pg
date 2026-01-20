@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package namespaces provides utilities to manage namespaces
@@ -33,7 +36,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/events/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -61,6 +65,18 @@ func getPreserveNamespaces() []string {
 	return preserveNamespacesList
 }
 
+// CleanupClusterLogs cleans up the cluster logs of a given namespace
+func CleanupClusterLogs(namespace string, testFailed bool) error {
+	exists, _ := fileutils.FileExists(path.Join(SternLogDirectory, namespace))
+	if exists && !testFailed {
+		if err := fileutils.RemoveDirectory(path.Join(SternLogDirectory, namespace)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // cleanupNamespace does cleanup duty related to the tear-down of a namespace,
 // and is intended to be called in a DeferCleanup clause
 func cleanupNamespace(
@@ -76,12 +92,9 @@ func cleanupNamespace(
 	if len(namespace) == 0 {
 		return fmt.Errorf("namespace is empty")
 	}
-	exists, _ := fileutils.FileExists(path.Join(SternLogDirectory, namespace))
-	if exists && !testFailed {
-		err := fileutils.RemoveDirectory(path.Join(SternLogDirectory, namespace))
-		if err != nil {
-			return err
-		}
+
+	if err := CleanupClusterLogs(namespace, testFailed); err != nil {
+		return err
 	}
 
 	return deleteNamespace(ctx, crudClient, namespace)
@@ -306,10 +319,10 @@ func DumpNamespaceObjects(
 				Namespace: namespace,
 				Name:      cluster.Name + suffix,
 			}
-			endpoint := &corev1.Endpoints{}
-			_ = crudClient.Get(ctx, namespacedName, endpoint)
-			out, _ := json.MarshalIndent(endpoint, "", "    ")
-			_, _ = fmt.Fprintf(w, "Dumping %v/%v endpoint\n", namespace, endpoint.Name)
+			endpointSlice := &discoveryv1.EndpointSlice{}
+			_ = crudClient.Get(ctx, namespacedName, endpointSlice)
+			out, _ := json.MarshalIndent(endpointSlice, "", "    ")
+			_, _ = fmt.Fprintf(w, "Dumping %v/%v endpointSlice\n", namespace, endpointSlice.Name)
 			_, _ = fmt.Fprintln(w, string(out))
 		}
 	}
@@ -363,8 +376,8 @@ func GetEventList(
 	ctx context.Context,
 	crudClient client.Client,
 	namespace string,
-) (*v1.EventList, error) {
-	eventList := &v1.EventList{}
+) (*eventsv1.EventList, error) {
+	eventList := &eventsv1.EventList{}
 	err := crudClient.List(
 		ctx, eventList, client.InNamespace(namespace),
 	)

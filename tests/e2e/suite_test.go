@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -22,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/onsi/ginkgo/v2/types"
 	"github.com/thoas/go-funk"
 	appsv1 "k8s.io/api/apps/v1"
@@ -148,15 +150,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	}
 
 	minioEnv.Client = objs["minio"]
-})
-
-var _ = ReportAfterSuite("Gathering failed reports", func(report Report) {
-	// Keep the logs of the operator and the clusters in case of failure
-	// If everything is skipped, env has not been initialized, and we'll have nothing to clean up
-	if report.SuiteSucceeded && env != nil {
-		err := fileutils.RemoveDirectory(namespaces.SternLogDirectory)
-		Expect(err).ToNot(HaveOccurred())
-	}
 })
 
 var _ = BeforeEach(func() {

@@ -2,6 +2,8 @@
 
 name: release-pr
 
+permissions: read-all
+
 on:
   push:
     branches:
@@ -10,10 +12,13 @@ on:
 jobs:
   pull-request:
     runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+      contents: write
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
       -
         name: Get tag
         run: |
@@ -28,7 +33,7 @@ jobs:
       -
         name: Pull Request
         id: open-pr
-        uses: repo-sync/pull-request@v2.12
+        uses: repo-sync/pull-request@572331753c3787dee4a6c0b6719c889af9646b81 # v2.12
         with:
           destination_branch: ${{ env.DEST }}
           github_token: ${{ secrets.GITHUB_TOKEN }}

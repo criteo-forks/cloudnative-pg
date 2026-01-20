@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1
@@ -21,7 +24,6 @@ import (
 	"time"
 
 	barmanCatalog "github.com/cloudnative-pg/barman-cloud/pkg/catalog"
-	"github.com/cloudnative-pg/machinery/pkg/postgres/version"
 	"github.com/cloudnative-pg/machinery/pkg/stringset"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -461,12 +463,12 @@ var _ = Describe("look up for secrets", Ordered, func() {
 	}
 
 	// assertServiceNamesPresent returns the first missing service name encountered
-	assertServiceNamesPresent := func(data *stringset.Data, serviceName string) string {
+	assertServiceNamesPresent := func(data *stringset.Data, serviceName string, clusterDomain string) string {
 		assertions := []string{
 			serviceName,
 			fmt.Sprintf("%v.%v", serviceName, cluster.Namespace),
 			fmt.Sprintf("%v.%v.svc", serviceName, cluster.Namespace),
-			fmt.Sprintf("%v.%v.svc.cluster.local", serviceName, cluster.Namespace),
+			fmt.Sprintf("%v.%v.svc.%s", serviceName, cluster.Namespace, clusterDomain),
 		}
 		for _, assertion := range assertions {
 			if !data.Has(assertion) {
@@ -498,11 +500,11 @@ var _ = Describe("look up for secrets", Ordered, func() {
 		Expect(names).To(HaveLen(12))
 		namesSet := stringset.From(names)
 		Expect(namesSet.Len()).To(Equal(12))
-		Expect(assertServiceNamesPresent(namesSet, cluster.GetServiceReadWriteName())).To(BeEmpty(),
+		Expect(assertServiceNamesPresent(namesSet, cluster.GetServiceReadWriteName(), "cluster.local")).To(BeEmpty(),
 			"missing service name")
-		Expect(assertServiceNamesPresent(namesSet, cluster.GetServiceReadName())).To(BeEmpty(),
+		Expect(assertServiceNamesPresent(namesSet, cluster.GetServiceReadName(), "cluster.local")).To(BeEmpty(),
 			"missing service name")
-		Expect(assertServiceNamesPresent(namesSet, cluster.GetServiceReadOnlyName())).To(BeEmpty(),
+		Expect(assertServiceNamesPresent(namesSet, cluster.GetServiceReadOnlyName(), "cluster.local")).To(BeEmpty(),
 			"missing service name")
 	})
 
@@ -521,9 +523,9 @@ var _ = Describe("look up for secrets", Ordered, func() {
 		It("should generate correctly the managed services names", func() {
 			namesSet := stringset.From(cluster.GetClusterAltDNSNames())
 			Expect(namesSet.Len()).To(Equal(20))
-			Expect(assertServiceNamesPresent(namesSet, "one")).To(BeEmpty(),
+			Expect(assertServiceNamesPresent(namesSet, "one", "cluster.local")).To(BeEmpty(),
 				"missing service name")
-			Expect(assertServiceNamesPresent(namesSet, "two")).To(BeEmpty(),
+			Expect(assertServiceNamesPresent(namesSet, "two", "cluster.local")).To(BeEmpty(),
 				"missing service name")
 		})
 
@@ -536,9 +538,9 @@ var _ = Describe("look up for secrets", Ordered, func() {
 			Expect(namesSet.Len()).To(Equal(12))
 			Expect(namesSet.Has(cluster.GetServiceReadName())).To(BeFalse())
 			Expect(namesSet.Has(cluster.GetServiceReadOnlyName())).To(BeFalse())
-			Expect(assertServiceNamesPresent(namesSet, "one")).To(BeEmpty(),
+			Expect(assertServiceNamesPresent(namesSet, "one", "cluster.local")).To(BeEmpty(),
 				"missing service name")
-			Expect(assertServiceNamesPresent(namesSet, "two")).To(BeEmpty(),
+			Expect(assertServiceNamesPresent(namesSet, "two", "cluster.local")).To(BeEmpty(),
 				"missing service name")
 		})
 	})
@@ -775,16 +777,16 @@ var _ = Describe("A config map resource version", func() {
 
 var _ = Describe("PostgreSQL version detection", func() {
 	tests := []struct {
-		imageName       string
-		postgresVersion version.Data
+		imageName            string
+		postgresMajorVersion int
 	}{
 		{
 			"ghcr.io/cloudnative-pg/postgresql:14.0",
-			version.New(14, 0),
+			14,
 		},
 		{
-			"ghcr.io/cloudnative-pg/postgresql:13.2",
-			version.New(13, 2),
+			"ghcr.io/cloudnative-pg/postgresql:17.4",
+			17,
 		},
 	}
 
@@ -792,7 +794,7 @@ var _ = Describe("PostgreSQL version detection", func() {
 		cluster := Cluster{}
 		for _, test := range tests {
 			cluster.Spec.ImageName = test.imageName
-			Expect(cluster.GetPostgresqlVersion()).To(Equal(test.postgresVersion))
+			Expect(cluster.GetPostgresqlMajorVersion()).To(Equal(test.postgresMajorVersion))
 		}
 	})
 	It("correctly extract PostgreSQL versions from ImageCatalogRef", func() {
@@ -804,7 +806,32 @@ var _ = Describe("PostgreSQL version detection", func() {
 			},
 			Major: 16,
 		}
-		Expect(cluster.GetPostgresqlVersion()).To(Equal(version.New(16, 0)))
+		Expect(cluster.GetPostgresqlMajorVersion()).To(Equal(16))
+	})
+
+	It("correctly prioritizes ImageCatalogRef over Status.Image and Spec.ImageName", func() {
+		cluster := Cluster{
+			Spec: ClusterSpec{
+				ImageName: "ghcr.io/cloudnative-pg/postgresql:14.1",
+				ImageCatalogRef: &ImageCatalogRef{
+					TypedLocalObjectReference: corev1.TypedLocalObjectReference{
+						Name: "test-catalog",
+						Kind: "ImageCatalog",
+					},
+					Major: 16,
+				},
+			},
+			Status: ClusterStatus{
+				Image: "ghcr.io/cloudnative-pg/postgresql:15.2",
+			},
+		}
+
+		// ImageCatalogRef should take precedence
+		Expect(cluster.GetPostgresqlMajorVersion()).To(Equal(16))
+
+		// Remove Status.Image, Spec.ImageName should be used
+		cluster.Spec.ImageCatalogRef = nil
+		Expect(cluster.GetPostgresqlMajorVersion()).To(Equal(14))
 	})
 })
 
@@ -1162,7 +1189,7 @@ var _ = Describe("SynchronizeReplicasConfiguration", func() {
 	Context("CompileRegex", func() {
 		It("should return no errors when SynchronizeReplicasConfiguration is nil", func() {
 			synchronizeReplicas = nil
-			Expect(synchronizeReplicas.ValidateRegex()).To(BeEmpty())
+			Expect(synchronizeReplicas.ValidateRegex()).ToNot(HaveOccurred())
 		})
 
 		Context("when SynchronizeReplicasConfiguration is not nil", func() {
@@ -1171,7 +1198,7 @@ var _ = Describe("SynchronizeReplicasConfiguration", func() {
 			})
 
 			It("should compile patterns without errors", func() {
-				Expect(synchronizeReplicas.ValidateRegex()).To(BeEmpty())
+				Expect(synchronizeReplicas.ValidateRegex()).ToNot(HaveOccurred())
 			})
 
 			Context("when a pattern fails to compile", func() {
@@ -1180,15 +1207,10 @@ var _ = Describe("SynchronizeReplicasConfiguration", func() {
 				})
 
 				It("should return errors for the invalid pattern", func() {
-					errors := synchronizeReplicas.ValidateRegex()
-					Expect(errors).To(HaveLen(1))
+					err := synchronizeReplicas.ValidateRegex()
+					Expect(err).To(HaveOccurred())
 				})
 			})
-		})
-
-		It("should return no errors on subsequent calls when compile is called multiple times", func() {
-			Expect(synchronizeReplicas.ValidateRegex()).To(BeEmpty())
-			Expect(synchronizeReplicas.ValidateRegex()).To(BeEmpty())
 		})
 	})
 
@@ -1241,19 +1263,12 @@ var _ = Describe("SynchronizeReplicasConfiguration", func() {
 				Expect(isExcludedByUser).To(BeTrue())
 			})
 
-			It("should compile patterns before checking for exclusion when compile is not called", func() {
-				Expect(synchronizeReplicas.compiledPatterns).To(BeEmpty())
-				isExcludedByUser, err := synchronizeReplicas.IsExcludedByUser("pattern1MatchingSlot")
-				Expect(err).ToNot(HaveOccurred())
-				Expect(isExcludedByUser, err).To(BeTrue())
-				Expect(synchronizeReplicas.compiledPatterns).To(HaveLen(2))
-			})
-
 			It("should return an error in case of an invalid pattern", func() {
 				synchronizeReplicas.ExcludePatterns = []string{"([a-zA-Z]+"}
 				isExcludedByUser, err := synchronizeReplicas.IsExcludedByUser("test")
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(Equal("error parsing regexp: missing closing ): `([a-zA-Z]+`"))
+				Expect(err.Error()).To(Equal("failed to compile regex patterns: error parsing regexp: " +
+					"missing closing ): `([a-zA-Z]+`; "))
 				Expect(isExcludedByUser).To(BeFalse())
 			})
 		})

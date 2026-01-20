@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -45,14 +48,7 @@ var _ = Describe("Fast failover", Serial, Label(tests.LabelPerformance, tests.La
 			Skip("Test depth is lower than the amount requested for this test")
 		}
 
-		// The walreceiver of a standby that wasn't promoted may try to reconnect
-		// before the rw service endpoints are updated. In this case, the walreceiver
-		// can be stuck for waiting for the connection to be established for a time that
-		// depends on the tcp_syn_retries sysctl. Since by default
-		// net.ipv4.tcp_syn_retries=6, PostgreSQL can wait 2^7-1=127 seconds before
-		// restarting the walreceiver.
 		if !IsLocal() {
-			maxReattachTime = 180
 			maxFailoverTime = 30
 		}
 	})

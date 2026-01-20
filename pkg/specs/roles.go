@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package specs
@@ -293,13 +296,13 @@ func externalClusterSecrets(cluster apiv1.Cluster) []string {
 		if barmanObjStore := server.BarmanObjectStore; barmanObjStore != nil {
 			result = append(
 				result,
-				s3CredentialsSecrets(barmanObjStore.BarmanCredentials.AWS)...)
+				s3CredentialsSecrets(barmanObjStore.AWS)...)
 			result = append(
 				result,
-				azureCredentialsSecrets(barmanObjStore.BarmanCredentials.Azure)...)
+				azureCredentialsSecrets(barmanObjStore.Azure)...)
 			result = append(
 				result,
-				googleCredentialsSecrets(barmanObjStore.BarmanCredentials.Google)...)
+				googleCredentialsSecrets(barmanObjStore.Google)...)
 			if barmanObjStore.EndpointCA != nil {
 				result = append(result, barmanObjStore.EndpointCA.Name)
 			}
@@ -316,13 +319,13 @@ func backupSecrets(cluster apiv1.Cluster, backupOrigin *apiv1.Backup) []string {
 	if cluster.Spec.Backup != nil && cluster.Spec.Backup.BarmanObjectStore != nil {
 		result = append(
 			result,
-			s3CredentialsSecrets(cluster.Spec.Backup.BarmanObjectStore.BarmanCredentials.AWS)...)
+			s3CredentialsSecrets(cluster.Spec.Backup.BarmanObjectStore.AWS)...)
 		result = append(
 			result,
-			azureCredentialsSecrets(cluster.Spec.Backup.BarmanObjectStore.BarmanCredentials.Azure)...)
+			azureCredentialsSecrets(cluster.Spec.Backup.BarmanObjectStore.Azure)...)
 		result = append(
 			result,
-			googleCredentialsSecrets(cluster.Spec.Backup.BarmanObjectStore.BarmanCredentials.Google)...)
+			googleCredentialsSecrets(cluster.Spec.Backup.BarmanObjectStore.Google)...)
 	}
 
 	// Secrets needed by Barman, if set
@@ -335,13 +338,13 @@ func backupSecrets(cluster apiv1.Cluster, backupOrigin *apiv1.Backup) []string {
 	if backupOrigin != nil {
 		result = append(
 			result,
-			s3CredentialsSecrets(backupOrigin.Status.BarmanCredentials.AWS)...)
+			s3CredentialsSecrets(backupOrigin.Status.AWS)...)
 		result = append(
 			result,
-			azureCredentialsSecrets(backupOrigin.Status.BarmanCredentials.Azure)...)
+			azureCredentialsSecrets(backupOrigin.Status.Azure)...)
 		result = append(
 			result,
-			googleCredentialsSecrets(backupOrigin.Status.BarmanCredentials.Google)...)
+			googleCredentialsSecrets(backupOrigin.Status.Google)...)
 	}
 
 	return result

@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,13 +13,13 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1
 
 import (
-	"regexp"
-
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -193,14 +194,14 @@ type ImageCatalogRef struct {
 	// +kubebuilder:validation:XValidation:rule="self.kind == 'ImageCatalog' || self.kind == 'ClusterImageCatalog'",message="Only image catalogs are supported"
 	// +kubebuilder:validation:XValidation:rule="self.apiGroup == 'postgresql.cnpg.io'",message="Only image catalogs are supported"
 	corev1.TypedLocalObjectReference `json:",inline"`
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Major is immutable"
 	// The major version of PostgreSQL we want to use from the ImageCatalog
 	Major int `json:"major"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!(has(self.imageCatalogRef) && has(self.imageName))",message="imageName and imageCatalogRef are mutually exclusive"
 
-// ClusterSpec defines the desired state of Cluster
+// ClusterSpec defines the desired state of a PostgreSQL cluster managed by
+// CloudNativePG.
 type ClusterSpec struct {
 	// Description of this PostgreSQL cluster
 	// +optional
@@ -338,7 +339,7 @@ type ClusterSpec struct {
 
 	// The time in seconds that controls the window of time reserved for the smart shutdown of Postgres to complete.
 	// Make sure you reserve enough time for the operator to request a fast shutdown of Postgres
-	// (that is: `stopDelay` - `smartShutdownTimeout`).
+	// (that is: `stopDelay` - `smartShutdownTimeout`). Default is 180 seconds.
 	// +kubebuilder:default:=180
 	// +optional
 	SmartShutdownTimeout *int32 `json:"smartShutdownTimeout,omitempty"`
@@ -379,6 +380,12 @@ type ClusterSpec struct {
 	// for more information.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// InitContainerResources defines the resource requirements for init containers.
+	// If not specified, init containers will use the same resources as the main
+	// PostgreSQL container (Resources field).
+	// +optional
+	InitContainerResources *corev1.ResourceRequirements `json:"initContainerResources,omitempty"`
 
 	// EphemeralVolumesSizeLimit allows the user to set the limits for the ephemeral
 	// volumes
@@ -584,7 +591,10 @@ const (
 	// PhaseUpgrade upgrade in process
 	PhaseUpgrade = "Upgrading cluster"
 
-	// PhaseUpgradeDelayed is set when a cluster need to be upgraded
+	// PhaseMajorUpgrade major version upgrade in process
+	PhaseMajorUpgrade = "Upgrading Postgres major version"
+
+	// PhaseUpgradeDelayed is set when a cluster needs to be upgraded,
 	// but the operation is being delayed by the operator configuration
 	PhaseUpgradeDelayed = "Cluster upgrade delayed"
 
@@ -753,7 +763,8 @@ type AvailableArchitecture struct {
 	Hash string `json:"hash"`
 }
 
-// ClusterStatus defines the observed state of Cluster
+// ClusterStatus defines the observed state of a PostgreSQL cluster managed by
+// CloudNativePG.
 type ClusterStatus struct {
 	// The total number of PVC Groups detected in the cluster. It may differ from the number of existing instance pods.
 	// +optional
@@ -869,24 +880,34 @@ type ClusterStatus struct {
 	Certificates CertificatesStatus `json:"certificates,omitempty"`
 
 	// The first recoverability point, stored as a date in RFC3339 format.
-	// This field is calculated from the content of FirstRecoverabilityPointByMethod
+	// This field is calculated from the content of FirstRecoverabilityPointByMethod.
+	//
+	// Deprecated: the field is not set for backup plugins.
 	// +optional
 	FirstRecoverabilityPoint string `json:"firstRecoverabilityPoint,omitempty"`
 
-	// The first recoverability point, stored as a date in RFC3339 format, per backup method type
+	// The first recoverability point, stored as a date in RFC3339 format, per backup method type.
+	//
+	// Deprecated: the field is not set for backup plugins.
 	// +optional
 	FirstRecoverabilityPointByMethod map[BackupMethod]metav1.Time `json:"firstRecoverabilityPointByMethod,omitempty"`
 
-	// Last successful backup, stored as a date in RFC3339 format
-	// This field is calculated from the content of LastSuccessfulBackupByMethod
+	// Last successful backup, stored as a date in RFC3339 format.
+	// This field is calculated from the content of LastSuccessfulBackupByMethod.
+	//
+	// Deprecated: the field is not set for backup plugins.
 	// +optional
 	LastSuccessfulBackup string `json:"lastSuccessfulBackup,omitempty"`
 
-	// Last successful backup, stored as a date in RFC3339 format, per backup method type
+	// Last successful backup, stored as a date in RFC3339 format, per backup method type.
+	//
+	// Deprecated: the field is not set for backup plugins.
 	// +optional
 	LastSuccessfulBackupByMethod map[BackupMethod]metav1.Time `json:"lastSuccessfulBackupByMethod,omitempty"`
 
-	// Stored as a date in RFC3339 format
+	// Last failed backup, stored as a date in RFC3339 format.
+	//
+	// Deprecated: the field is not set for backup plugins.
 	// +optional
 	LastFailedBackup string `json:"lastFailedBackup,omitempty"`
 
@@ -931,13 +952,13 @@ type ClusterStatus struct {
 	// +optional
 	OnlineUpdateEnabled bool `json:"onlineUpdateEnabled,omitempty"`
 
-	// AzurePVCUpdateEnabled shows if the PVC online upgrade is enabled for this cluster
-	// +optional
-	AzurePVCUpdateEnabled bool `json:"azurePVCUpdateEnabled,omitempty"`
-
 	// Image contains the image name used by the pods
 	// +optional
 	Image string `json:"image,omitempty"`
+
+	// PGDataImageInfo contains the details of the latest image that has run on the current data directory.
+	// +optional
+	PGDataImageInfo *ImageInfo `json:"pgDataImageInfo,omitempty"`
 
 	// PluginStatus is the status of the loaded plugins
 	// +optional
@@ -953,6 +974,18 @@ type ClusterStatus struct {
 	// WAL file, and Time of latest checkpoint
 	// +optional
 	DemotionToken string `json:"demotionToken,omitempty"`
+
+	// SystemID is the latest detected PostgreSQL SystemID
+	// +optional
+	SystemID string `json:"systemID,omitempty"`
+}
+
+// ImageInfo contains the information about a PostgreSQL image
+type ImageInfo struct {
+	// Image is the image name
+	Image string `json:"image"`
+	// MajorVersion is the major version of the image
+	MajorVersion int `json:"majorVersion"`
 }
 
 // SwitchReplicaClusterStatus contains all the statuses regarding the switch of a cluster to a replica cluster
@@ -969,6 +1002,8 @@ type InstanceReportedState struct {
 	// indicates on which TimelineId the instance is
 	// +optional
 	TimeLineID int `json:"timeLineID,omitempty"`
+	// IP address of the instance
+	IP string `json:"ip,omitempty"`
 }
 
 // ClusterConditionType defines types of cluster conditions
@@ -983,6 +1018,9 @@ const (
 	ConditionBackup ClusterConditionType = "LastBackupSucceeded"
 	// ConditionClusterReady represents whether a cluster is Ready
 	ConditionClusterReady ClusterConditionType = "Ready"
+	// ConditionConsistentSystemID is true when the all the instances of the
+	// cluster report the same System ID.
+	ConditionConsistentSystemID ClusterConditionType = "ConsistentSystemID"
 )
 
 // ConditionStatus defines conditions of resources
@@ -1108,18 +1146,6 @@ type SynchronizeReplicasConfiguration struct {
 	// List of regular expression patterns to match the names of replication slots to be excluded (by default empty)
 	// +optional
 	ExcludePatterns []string `json:"excludePatterns,omitempty"`
-
-	synchronizeReplicasCache `json:"-"`
-}
-
-// synchronizeReplicasCache contains the result of the regex compilation
-// +kubebuilder:object:generate:=false
-type synchronizeReplicasCache struct {
-	compiledPatterns []regexp.Regexp `json:"-"`
-
-	compiled bool `json:"-"`
-
-	compileErrors []error `json:"-"`
 }
 
 // ReplicationSlotsConfiguration encapsulates the configuration
@@ -1316,7 +1342,6 @@ type SynchronousReplicaConfiguration struct {
 	// to allow for operational continuity. This setting is only applicable if both
 	// `standbyNamesPre` and `standbyNamesPost` are unset (empty).
 	// +kubebuilder:validation:Enum=required;preferred
-	// +kubebuilder:default:=required
 	// +optional
 	DataDurability DataDurabilityLevel `json:"dataDurability,omitempty"`
 }
@@ -1534,6 +1559,7 @@ type BootstrapInitDB struct {
 	Secret *LocalObjectReference `json:"secret,omitempty"`
 
 	// The list of options that must be passed to initdb when creating the cluster.
+	//
 	// Deprecated: This could lead to inconsistent configurations,
 	// please use the explicit provided parameters instead.
 	// If defined, explicit values will be ignored.
@@ -2052,6 +2078,9 @@ type MonitoringConfiguration struct {
 
 	// Enable or disable the `PodMonitor`
 	// +kubebuilder:default:=false
+	//
+	// Deprecated: This feature will be removed in an upcoming release. If
+	// you need this functionality, you can create a PodMonitor manually.
 	// +optional
 	EnablePodMonitor bool `json:"enablePodMonitor,omitempty"`
 
@@ -2061,10 +2090,16 @@ type MonitoringConfiguration struct {
 	TLSConfig *ClusterMonitoringTLSConfiguration `json:"tls,omitempty"`
 
 	// The list of metric relabelings for the `PodMonitor`. Applied to samples before ingestion.
+	//
+	// Deprecated: This feature will be removed in an upcoming release. If
+	// you need this functionality, you can create a PodMonitor manually.
 	// +optional
 	PodMonitorMetricRelabelConfigs []monitoringv1.RelabelConfig `json:"podMonitorMetricRelabelings,omitempty"`
 
 	// The list of relabelings for the `PodMonitor`. Applied to samples before scraping.
+	//
+	// Deprecated: This feature will be removed in an upcoming release. If
+	// you need this functionality, you can create a PodMonitor manually.
 	// +optional
 	PodMonitorRelabelConfigs []monitoringv1.RelabelConfig `json:"podMonitorRelabelings,omitempty"`
 }
@@ -2208,8 +2243,9 @@ type PluginConfiguration struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Only one plugin can be declared as WALArchiver.
-	// Cannot be active if ".spec.backup.barmanObjectStore" configuration is present.
+	// Marks the plugin as the WAL archiver. At most one plugin can be
+	// designated as a WAL archiver. This cannot be enabled if the
+	// `.spec.backup.barmanObjectStore` configuration is present.
 	// +kubebuilder:default:=false
 	// +optional
 	IsWALArchiver *bool `json:"isWALArchiver,omitempty"`
@@ -2361,7 +2397,8 @@ type RoleConfiguration struct {
 // +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.phase",description="Cluster current status"
 // +kubebuilder:printcolumn:name="Primary",type="string",JSONPath=".status.currentPrimary",description="Primary pod"
 
-// Cluster is the Schema for the PostgreSQL API
+// Cluster defines the API schema for a highly available PostgreSQL database cluster
+// managed by CloudNativePG.
 type Cluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata"`

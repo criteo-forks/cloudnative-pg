@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -115,7 +118,7 @@ var _ = Describe("Azure - Backup and restore", Label(tests.LabelBackupRestore), 
 				}, 30).Should(BeNumerically(">=", 1))
 				Eventually(func() (string, error) {
 					cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-					return cluster.Status.FirstRecoverabilityPoint, err
+					return cluster.Status.FirstRecoverabilityPoint, err //nolint:staticcheck
 				}, 30).ShouldNot(BeEmpty())
 			})
 
@@ -303,7 +306,7 @@ var _ = Describe("Azure - Clusters Recovery From Barman Object Store", Label(tes
 					clusterName,
 					sourceBackupFileAzurePITR,
 					AzureConfiguration,
-					1,
+					2,
 					currentTimestamp,
 				)
 
@@ -410,7 +413,7 @@ var _ = Describe("Azure - Clusters Recovery From Barman Object Store", Label(tes
 					clusterName,
 					sourceBackupFileAzurePITRSAS,
 					AzureConfiguration,
-					1,
+					2,
 					currentTimestamp,
 				)
 
@@ -479,11 +482,11 @@ func prepareClusterForPITROnAzureBlob(
 		Eventually(func() (int, error) {
 			return backups.CountFilesOnAzureBlobStorage(azureConfig, clusterName, "data.tar")
 		}, 30).Should(BeEquivalentTo(expectedVal))
-		Eventually(func() (string, error) {
+		Eventually(func(g Gomega) {
 			cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
-			Expect(err).ToNot(HaveOccurred())
-			return cluster.Status.FirstRecoverabilityPoint, err
-		}, 30).ShouldNot(BeEmpty())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(cluster.Status.FirstRecoverabilityPoint).ToNot(BeEmpty()) //nolint:staticcheck
+		}, 30).Should(Succeed())
 	})
 
 	// Write a table and insert 2 entries on the "app" database

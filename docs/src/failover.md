@@ -1,4 +1,11 @@
+---
+id: failover
+sidebar_position: 400
+title: Automated failover
+---
+
 # Automated failover
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 In the case of unexpected errors on the primary for longer than the
 `.spec.failoverDelay` (by default `0` seconds), the cluster will go into

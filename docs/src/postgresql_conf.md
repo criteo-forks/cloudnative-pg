@@ -1,4 +1,11 @@
+---
+id: postgresql_conf
+sidebar_position: 220
+title: PostgreSQL Configuration
+---
+
 # PostgreSQL Configuration
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 Users that are familiar with PostgreSQL are aware of the existence of the
 following three files to configure an instance:
@@ -64,7 +71,7 @@ operator by applying the following sections in this order:
 The **global default parameters** are:
 
 ```text
-archive_mode = 'on'
+archive_timeout = '5min'
 dynamic_shared_memory_type = 'posix'
 full_page_writes = 'on'
 logging_collector = 'on'
@@ -77,9 +84,11 @@ log_truncate_on_rotation = 'false'
 max_parallel_workers = '32'
 max_replication_slots = '32'
 max_worker_processes = '32'
-shared_memory_type = 'mmap' # for PostgreSQL >= 12 only
-wal_keep_size = '512MB' # for PostgreSQL >= 13 only
-wal_keep_segments = '32' # for PostgreSQL <= 12 only
+shared_memory_type = 'mmap'
+shared_preload_libraries = ''
+ssl_max_protocol_version = 'TLSv1.3'
+ssl_min_protocol_version = 'TLSv1.3'
+wal_keep_size = '512MB'
 wal_level = 'logical'
 wal_log_hints = 'on'
 wal_sender_timeout = '5s'
@@ -127,23 +136,58 @@ Since the fixed parameters are added at the end, they can't be overridden by the
 user via the YAML configuration. Those parameters are required for correct WAL
 archiving and replication.
 
-### Replication settings
+### Write-Ahead Log Level
 
-The `primary_conninfo`, `restore_command`,  and `recovery_target_timeline`
-parameters are managed automatically by the operator according to the state of
-the instance in the cluster.
+The [`wal_level`](https://www.postgresql.org/docs/current/runtime-config-wal.html)
+parameter in PostgreSQL determines the amount of information written to the
+Write-Ahead Log (WAL). It accepts the following values:
+
+- `minimal`: Writes only the information required for crash recovery.
+- `replica`: Adds sufficient information to support WAL archiving and streaming
+  replication, including the ability to run read-only queries on standby
+  instances.
+- `logical`: Includes all information from `replica`, plus additional information
+  required for logical decoding and replication.
+
+By default, upstream PostgreSQL sets `wal_level` to `replica`. CloudNativePG,
+instead, sets `wal_level` to `logical` by default to enable logical replication
+out of the box. This makes it easier to support use cases such as migrations
+from external PostgreSQL servers.
+
+If your cluster does not require logical replication, it is recommended to set
+`wal_level` to `replica` to reduce WAL volume and overhead.
+
+Finally, CloudNativePG allows `wal_level` to be set to `minimal` only for
+single-instance clusters with WAL archiving disabled.
+
+### Replication Settings
+
+The `primary_conninfo`, `restore_command`, and `recovery_target_timeline`
+parameters are automatically managed by the operator based on the instance's
+role within the cluster. These parameters are effectively applied only when the
+instance is operating as a replica.
 
 ```text
-primary_conninfo = 'host=cluster-example-rw user=postgres dbname=postgres'
+primary_conninfo = 'host=<PRIMARY> user=postgres dbname=postgres'
 recovery_target_timeline = 'latest'
 ```
+
+The [`STANDBY_TCP_USER_TIMEOUT` operator configuration setting](operator_conf.md#available-options),
+if specified, sets the `tcp_user_timeout` parameter on all standby instances
+managed by the operator.
+
+The `tcp_user_timeout` parameter determines how long transmitted data can
+remain unacknowledged before the TCP connection is forcibly closed. Adjusting
+this value allows you to fine-tune the responsiveness of standby instances to
+network disruptions. For more details, refer to the
+[PostgreSQL documentation](https://www.postgresql.org/docs/current/runtime-config-connection.html#GUC-TCP-USER-TIMEOUT).
 
 ### Log control settings
 
 The operator requires PostgreSQL to output its log in CSV format, and the
 instance manager automatically parses it and outputs it in JSON format.
-For this reason, all log settings in PostgreSQL are fixed and cannot be
-changed.
+As a result, certain PostgreSQL log settings, listed in [this section](#fixed-parameters),
+are fixed and cannot be modified.
 
 For further information, please refer to the ["Logging" section](logging.md).
 
@@ -648,4 +692,3 @@ Users are not allowed to set the following configuration parameters in the
 - `unix_socket_directories`
 - `unix_socket_group`
 - `unix_socket_permissions`
-

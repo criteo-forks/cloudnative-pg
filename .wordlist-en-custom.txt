@@ -25,6 +25,7 @@ AzureCredentials
 AzurePVCUpdateEnabled
 Azurite
 BDR
+BUSL
 BackupCapabilities
 BackupConfiguration
 BackupFrom
@@ -74,6 +75,7 @@ Ceph
 CertificatesConfiguration
 CertificatesStatus
 Certmanager
+CiliumNetworkPolicy
 ClassName
 ClientCASecret
 ClientCertsCASecret
@@ -144,9 +146,11 @@ EDB
 EKS
 EOF
 EOL
+ESO
 EmbeddedObjectMetadata
 EnablePDB
 EncryptionType
+Endevir
 EndpointCA
 EnsureOption
 EnterpriseDB
@@ -161,6 +165,7 @@ ExtensionSpec
 ExtensionStatus
 ExternalCluster
 FQDN
+FQDNs
 Fei
 Filesystem
 Fluentd
@@ -199,26 +204,35 @@ IfNotPresent
 ImageCatalog
 ImageCatalogRef
 ImageCatalogSpec
+ImageInfo
 ImportSource
 InfoSec
 Innocenti
 InstanceID
 InstanceReportedState
+IsolationCheckConfiguration
+Isovalent
 Istio
 Istio's
 JSON
 Jihyuk
 Jitendra
+Joda
+KV
+Karpenter
 KinD
 Krew
 KubeCon
 Kubegres
+KubernetesClusterDomain
 Kumar
 LDAP
 LDAPBindAsAuth
 LDAPBindSearchAuth
 LDAPConfig
 LDAPScheme
+LF
+LLC
 LPV
 LSN
 LTS
@@ -258,6 +272,8 @@ NOCREATEROLE
 NOSUPERUSER
 Namespaces
 Nenciarini
+NetworkPolicies
+NetworkPolicy
 Niccolò
 NodeAffinity
 NodeMaintenanceWindow
@@ -277,6 +293,7 @@ OngoingSnapshotBackups
 OnlineConfiguration
 OnlineUpdateEnabled
 OnlineUpgrading
+OpenBao
 OpenID
 OpenSSL
 OpenShift
@@ -291,12 +308,14 @@ PGAudit
 PGDATA
 PGDG
 PGData
+PGDataImageInfo
 PGSQL
 PKI
 PODNAME
 PPROF
 PV
 PVCs
+PascalBourdier
 PasswordConfiguration
 PasswordState
 PasswordStatus
@@ -360,6 +379,7 @@ PublicationTargetAllTables
 PublicationTargetObject
 PublicationTargetTable
 PullPolicy
+PushSecret
 QoS
 Quaresima
 QuickStart
@@ -424,6 +444,7 @@ Seccomp
 SeccompProfile
 SecretKeySelector
 SecretRefs
+SecretStore
 SecretVersion
 SecretsResourceVersion
 SecurityProfiles
@@ -467,6 +488,7 @@ SynchronizeReplicasConfiguration
 SynchronousReplicaConfiguration
 SynchronousReplicaConfigurationMethod
 Synopsys
+SystemID
 TCP
 TLS
 TLSv
@@ -494,6 +516,7 @@ Uncomment
 Unrealizable
 UpdateStrategy
 VLDB
+VLDBs
 VM
 VMs
 VOLNAME
@@ -513,11 +536,13 @@ WALs
 Wadle
 WalBackupConfiguration
 WalClassName
+Wallner
 XXu
 YXBw
 YY
 YYYY
 Zalando
+Zstandard
 abd
 accessKeyId
 accessModes
@@ -596,6 +621,7 @@ balancer
 balancers
 barmanEndpointCA
 barmanObjectStore
+barmancloud
 barmanobjectstore
 barmanobjectstoreconfiguration
 baseDN
@@ -661,6 +687,7 @@ cmd
 cn
 cnp
 cnpg
+codebase
 codeready
 collationVersion
 columnValue
@@ -741,6 +768,7 @@ defaultPoolSize
 demotionToken
 deployer
 deploymentStrategy
+dereference
 destinationPath
 dev
 devel
@@ -765,10 +793,12 @@ downtimes
 dvcmQ
 dwm
 dx
+eBPF
 ecdsa
 edb
 eks
 enableAlterSystem
+enableInstancePprof
 enableMetricsTLS
 enablePDB
 enablePodAntiAffinity
@@ -813,8 +843,10 @@ fio
 fips
 firstRecoverabilityPoint
 firstRecoverabilityPointByMethod
+fqdn
 freddie
 fuzzystrmatch
+gRPC
 gapped
 gc
 gcc
@@ -836,6 +868,7 @@ gosec
 govulncheck
 grafana
 gzip
+hardcoded
 hashicorp
 hba
 hdr
@@ -863,6 +896,7 @@ imageName
 imagePullPolicy
 imagePullSecrets
 imagecatalogs
+imagevolume
 img
 immediateCheckpoint
 impactful
@@ -903,12 +937,14 @@ json
 jsonpath
 kb
 kbytes
+keepalive
 kms
 kube
 kubebuilder
 kubectl
 kubelet
 kubernetes
+kubernetesClusterDomain
 labelColumnName
 labelColumnValue
 labelName
@@ -954,7 +990,11 @@ logLevel
 lookups
 lsn
 lt
+lz
+mTLS
 macOS
+majorVersion
+majorVersionUpgradeFromImage
 malcolm
 mallocs
 managedRoleSecretVersion
@@ -962,6 +1002,7 @@ managedRolesStatus
 mario
 matchExpressions
 matchLabels
+mateusoliveira
 maxClientConnections
 maxParallel
 maxStandbyNamesFromCluster
@@ -992,6 +1033,7 @@ msg
 mspan
 multinamespace
 mutatingwebhookconfigurations
+mutex
 myAKSCluster
 myResourceGroup
 namespace
@@ -1018,6 +1060,7 @@ num
 oauth
 objectmeta
 objectstore
+objectstores
 objid
 objref
 objsubid
@@ -1061,6 +1104,7 @@ pgAdmin
 pgBouncer
 pgBouncerIntegration
 pgBouncerSecrets
+pgDataImageInfo
 pgDumpExtraOptions
 pgRestoreExtraOptions
 pgSQL
@@ -1188,6 +1232,7 @@ robfig
 roleRef
 rollingupdatestatus
 rollout
+rollouts
 rpo
 rto
 runonserver
@@ -1309,6 +1354,7 @@ synchronizeReplicas
 synchronizeReplicasCache
 sys
 syslog
+systemID
 systemd
 sysv
 tAc
@@ -1335,6 +1381,7 @@ targetXID
 tbody
 tcp
 td
+templating
 temporaryData
 terminationGracePeriodSeconds
 th
@@ -1413,5 +1460,7 @@ www
 xact
 xlog
 xml
+xz
 yaml
 yml
+zstd

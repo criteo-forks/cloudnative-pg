@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package backup
@@ -107,7 +110,12 @@ func NewCmd() *cobra.Command {
 				return fmt.Errorf("backup-method: %s is not supported by the backup command", backupMethod)
 			}
 
-			if backupMethod != string(apiv1.BackupMethodPlugin) {
+			if backupMethod == string(apiv1.BackupMethodPlugin) {
+				if len(pluginName) == 0 {
+					return fmt.Errorf("plugin-name is required when backup method in %s",
+						apiv1.BackupMethodPlugin)
+				}
+			} else {
 				if len(pluginName) > 0 {
 					return fmt.Errorf("plugin-name is allowed only when backup method in %s",
 						apiv1.BackupMethodPlugin)
@@ -203,7 +211,7 @@ func NewCmd() *cobra.Command {
 	)
 
 	backupSubcommand.Flags().StringVar(&waitForArchive, "wait-for-archive", "",
-		"Set the '.spec.onlineConfiguratoin.waitForArchive' field of the "+
+		"Set the '.spec.onlineConfiguration.waitForArchive' field of the "+
 			"Backup resource. If not specified, the value in the "+
 			"'.spec.backup.volumeSnapshot.onlineConfiguration' field will be used. "+
 			optionalAcceptedValues,

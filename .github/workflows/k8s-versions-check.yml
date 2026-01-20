@@ -16,10 +16,7 @@ on:
         description: 'Limit to the specified engines list (eks, aks, gke, kind, ocp)'
         required: false
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: read
+permissions: read-all
 
 defaults:
   run:
@@ -37,19 +34,19 @@ jobs:
     steps:
       -
         name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
       -
         # There is no command to get EKS k8s versions, we have to parse the documentation
         name: Get updated EKS versions
         run: |
-          DOC_URL="https://raw.githubusercontent.com/awsdocs/amazon-eks-user-guide/mainline/latest/ug/clusters/kubernetes-versions-standard.adoc"
+          DOC_URL="https://raw.githubusercontent.com/awsdocs/amazon-eks-user-guide/mainline/latest/ug/versioning/kubernetes-versions-standard.adoc"
           curl --silent "${DOC_URL}" | sed -e 's/.*Kubernetes \([0-9].[0-9][0-9]\).*/\1/;/^[0-9]\./!d' | uniq | \
             awk -vv=$MINIMAL_K8S '$0>=v {print $0}' | \
             jq -Rn '[inputs]' | tee .github/eks_versions.json
         if: github.event.inputs.limit == null || github.event.inputs.limit == 'eks'
       -
         name: Azure Login
-        uses: azure/login@v2.2.0
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
         if: github.event.inputs.limit == null || github.event.inputs.limit == 'aks'
@@ -64,19 +61,19 @@ jobs:
         if: github.event.inputs.limit == null || github.event.inputs.limit == 'aks'
       -
         name: 'Auth GKE'
-        uses: 'google-github-actions/auth@v2'
+        uses: 'google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093' # v3
         with:
           credentials_json: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
         if: github.event.inputs.limit == null || github.event.inputs.limit == 'gke'
       -
         name: Set up Cloud SDK for GKE
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
         if: github.event.inputs.limit == null || github.event.inputs.limit == 'gke'
       -
         name: Install YQ
-        uses: frenck/action-setup-yq@v1
+        uses: frenck/action-setup-yq@c4b5be8b4a215c536a41d436757d9feb92836d4f # v1
         if: github.event.inputs.limit == null || github.event.inputs.limit == 'gke'
       -
         name: Get updated GKE versions
@@ -123,7 +120,7 @@ jobs:
         if: github.event.inputs.limit == null || github.event.inputs.limit == 'ocp'
       -
         name: Create Pull Request if versions have been updated
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@84ae59a2cdc2258d6fa0732dd66352dddae2a412 # v7
         with:
           token: ${{ secrets.REPO_GHA_PAT }}
           title: "feat: Public Cloud K8S versions update"

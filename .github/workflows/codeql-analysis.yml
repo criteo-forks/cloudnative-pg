@@ -30,9 +30,12 @@ on:
   schedule:
     - cron: '24 0 * * 5'
 
+permissions: read-all
+
 # set up environment variables to be used across all the jobs
 env:
-  GOLANG_VERSION: "1.24.x"
+  # renovate: datasource=golang-version depName=golang versioning=loose
+  GOLANG_VERSION: "1.25.5"
 
 jobs:
   duplicate_runs:
@@ -43,7 +46,7 @@ jobs:
       should_skip: ${{ steps.skip_check.outputs.should_skip == 'true' && github.ref != 'refs/heads/main' }}
     steps:
       - id: skip_check
-        uses: fkirc/skip-duplicate-actions@v5.3.1
+        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
         with:
           concurrent_skipping: 'same_content'
           skip_after_successful_duplicate: 'true'
@@ -58,23 +61,22 @@ jobs:
     if: |
       needs.duplicate_runs.outputs.should_skip != 'true'
     permissions:
-      actions: read
       contents: read
       security-events: write
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
 
     - name: Install Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
       with:
         go-version: ${{ env.GOLANG_VERSION }}
         check-latest: true
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
+      uses: github/codeql-action/init@e12f0178983d466f2f6028f5cc7a6d786fd97f4b # v4
       with:
         languages: "go"
         build-mode: manual
@@ -91,6 +93,6 @@ jobs:
         make
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      uses: github/codeql-action/analyze@e12f0178983d466f2f6028f5cc7a6d786fd97f4b # v4
       with:
         category: "/language:go"

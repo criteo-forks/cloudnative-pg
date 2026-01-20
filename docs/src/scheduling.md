@@ -1,4 +1,11 @@
+---
+id: scheduling
+sidebar_position: 120
+title: Scheduling
+---
+
 # Scheduling
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 Scheduling, in Kubernetes, is the process responsible for placing a new pod on
 the best node possible, based on several criteria.
@@ -40,7 +47,7 @@ metadata:
   name: cluster-example
 spec:
   instances: 3
-  imageName: ghcr.io/cloudnative-pg/postgresql:17.4
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie
 
   affinity:
     enablePodAntiAffinity: true # Default value

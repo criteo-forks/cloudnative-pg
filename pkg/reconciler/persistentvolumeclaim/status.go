@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package persistentvolumeclaim
@@ -107,7 +110,7 @@ func EnrichStatus(
 		}
 
 		// There's no point in reattaching ignored PVCs
-		if pvc.ObjectMeta.DeletionTimestamp != nil {
+		if pvc.DeletionTimestamp != nil {
 			continue
 		}
 
@@ -159,7 +162,7 @@ func classifyPVC(
 	instanceName string,
 ) status {
 	// PVC to ignore
-	if pvc.ObjectMeta.DeletionTimestamp != nil || hasUnknownStatus(ctx, pvc) {
+	if pvc.DeletionTimestamp != nil || hasUnknownStatus(ctx, pvc) {
 		return ignored
 	}
 

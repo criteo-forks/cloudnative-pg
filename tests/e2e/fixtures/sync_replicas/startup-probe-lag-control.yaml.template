@@ -23,9 +23,12 @@ spec:
     startup:
       type: streaming
       maximumLag: 16Mi
-      failureThreshold: 30
+      failureThreshold: 60
+      periodSeconds: 1
+    readiness:
+      failureThreshold: 10
       periodSeconds: 1
 
   storage:
     storageClass: ${E2E_DEFAULT_STORAGE_CLASS}
-    size: 1G
+    size: 3Gi

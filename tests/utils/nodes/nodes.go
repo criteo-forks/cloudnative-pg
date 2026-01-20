@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package nodes contains the helper methods/functions for nodes
@@ -22,7 +25,7 @@ import (
 	"fmt"
 	"strings"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/cloudnative-pg/cloudnative-pg/tests/utils/clusterutils"
@@ -103,8 +106,8 @@ func UncordonAll(
 func List(
 	ctx context.Context,
 	crudClient client.Client,
-) (*v1.NodeList, error) {
-	nodeList := &v1.NodeList{}
+) (*corev1.NodeList, error) {
+	nodeList := &corev1.NodeList{}
 	err := crudClient.List(ctx, nodeList, client.InNamespace(""))
 	return nodeList, err
 }
@@ -128,4 +131,33 @@ func DescribeKubernetesNodes(ctx context.Context, crudClient client.Client) (str
 		report.WriteString("================================================\n")
 	}
 	return report.String(), nil
+}
+
+// IsNodeReachable checks if a node is:
+// 1. Ready
+// 2. Not tainted with the unreachable taint
+func IsNodeReachable(
+	ctx context.Context,
+	crudClient client.Client,
+	nodeName string,
+) (bool, error) {
+	node := &corev1.Node{}
+	err := crudClient.Get(ctx, client.ObjectKey{Name: nodeName}, node)
+	if err != nil {
+		return false, err
+	}
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionFalse {
+			return false, nil
+		}
+	}
+
+	// check that the node does not have the unreachable taint
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == corev1.TaintNodeUnreachable {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }

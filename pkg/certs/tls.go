@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package certs
@@ -22,7 +25,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -38,7 +41,7 @@ func newTLSConfigFromSecret(
 	cli client.Client,
 	caSecret types.NamespacedName,
 ) (*tls.Config, error) {
-	secret := &v1.Secret{}
+	secret := &corev1.Secret{}
 	err := cli.Get(ctx, caSecret, secret)
 	if err != nil {
 		return nil, fmt.Errorf("while getting caSecret %s: %w", caSecret.Name, err)
@@ -54,9 +57,18 @@ func newTLSConfigFromSecret(
 	// for the <cluster>-rw service, which would cause a name verification error.
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCertificate)
+
+	return NewTLSConfigFromCertPool(caCertPool), nil
+}
+
+// NewTLSConfigFromCertPool creates a tls.Config object from X509 cert pool
+// containing the expected server CA
+func NewTLSConfigFromCertPool(
+	certPool *x509.CertPool,
+) *tls.Config {
 	tlsConfig := tls.Config{
 		MinVersion:         tls.VersionTLS13,
-		RootCAs:            caCertPool,
+		RootCAs:            certPool,
 		InsecureSkipVerify: true, //#nosec G402 -- we are verifying the certificate ourselves
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			// Code adapted from https://go.dev/src/crypto/tls/handshake_client.go#L986
@@ -74,7 +86,7 @@ func newTLSConfigFromSecret(
 			}
 
 			opts := x509.VerifyOptions{
-				Roots:         caCertPool,
+				Roots:         certPool,
 				Intermediates: x509.NewCertPool(),
 			}
 
@@ -90,7 +102,7 @@ func newTLSConfigFromSecret(
 		},
 	}
 
-	return &tlsConfig, nil
+	return &tlsConfig
 }
 
 // NewTLSConfigForContext creates a tls.config with the provided data and returns an expanded context that contains

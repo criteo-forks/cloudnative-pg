@@ -1,5 +1,6 @@
 #
-# Copyright The CloudNativePG Contributors
+# Copyright © contributors to CloudNativePG, established as
+# CloudNativePG a Series of LF Projects, LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
 #
 
 import argparse
@@ -174,9 +177,10 @@ class E2EJob(dict):
     def __init__(self, k8s_version, postgres_version_list, flavor):
         postgres_version = postgres_version_list.latest
         postgres_version_pre = postgres_version_list.oldest
+        short_postgres_version = postgres_version.split('-')[0]
 
         if flavor == "pg":
-            name = f"{k8s_version}-PostgreSQL-{postgres_version}"
+            name = f"{k8s_version}-PostgreSQL-{short_postgres_version}"
             repo = POSTGRES_REPO
             kind = "PostgreSQL"
 

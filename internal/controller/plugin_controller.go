@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package controller contains the controller of the CRD
@@ -21,6 +24,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"strconv"
@@ -114,7 +118,13 @@ func (r *PluginReconciler) reconcile(
 	service *corev1.Service,
 	pluginName string,
 ) (ctrl.Result, error) {
-	contextLogger := log.FromContext(ctx).WithValues("pluginName", pluginName)
+	contextLogger := log.FromContext(ctx).WithValues(
+		"pluginName", pluginName,
+		"service", client.ObjectKeyFromObject(service))
+	contextLogger.Debug("Plugin reconciliation loop start")
+	defer func() {
+		contextLogger.Debug("Plugin reconciliation loop end")
+	}()
 
 	pluginServerSecret := service.Annotations[utils.PluginServerSecretAnnotationName]
 	if len(pluginServerSecret) == 0 {
@@ -126,6 +136,8 @@ func (r *PluginReconciler) reconcile(
 		Name:      pluginServerSecret,
 	})
 	if err != nil {
+		contextLogger.Error(err, "Error while getting server secret for plugin",
+			"secretName", pluginServerSecret)
 		return ctrl.Result{}, err
 	}
 
@@ -139,6 +151,8 @@ func (r *PluginReconciler) reconcile(
 		Name:      pluginClientSecret,
 	})
 	if err != nil {
+		contextLogger.Error(err, "Error while getting client secret for plugin",
+			"secretName", pluginClientSecret)
 		return ctrl.Result{}, err
 	}
 
@@ -164,26 +178,54 @@ func (r *PluginReconciler) reconcile(
 		clientSecret.Data[corev1.TLSPrivateKeyKey],
 	)
 	if err != nil {
-		contextLogger.Error(err, "Error while parsing client key and certificate for mTLS authentication")
+		contextLogger.Error(err, "Error while parsing client key and certificate for mTLS authentication",
+			"secretName", clientSecret.Name)
 		return ctrl.Result{}, err
 	}
 
 	serverCertificatePool := x509.NewCertPool()
 	if ok := serverCertificatePool.AppendCertsFromPEM(serverSecret.Data[corev1.TLSCertKey]); !ok {
-		// Unfortunately, by doing that, we loose the certificate parsing error
-		// and we don't know if the problem lies in the PEM block or in the DER content
-		err := fmt.Errorf("parsing error")
-		contextLogger.Error(err, "Error while parsing server certificate for mTLS authentication")
+		secretLogger := contextLogger.WithValues("secretName", serverSecret.Name,
+			"secretKey", corev1.TLSCertKey)
+		// The certificate parsing failed, but unfortunately we are not aware of
+		// the root cause.
+		//
+		// To emit a better log message, we individually execute the parsing
+		// step and look at the real error.
+		block, _ := pem.Decode(serverSecret.Data[corev1.TLSCertKey])
+		if block == nil {
+			err := fmt.Errorf("no valid PEM block found in server certificate from secret %q", serverSecret.Name)
+			secretLogger.Error(err, "Error while parsing server certificate for mTLS authentication")
+			return ctrl.Result{}, err
+		}
+
+		_, err := x509.ParseCertificate(block.Bytes)
+		if err == nil {
+			// If we don't manage to get the real error, we fall back to the
+			// generic one.
+			err = fmt.Errorf(
+				"could not parse the server certificate from secret %q, please check the certificate format and validity",
+				serverSecret.Name,
+			)
+		}
+
+		secretLogger.Error(err, "Error while parsing server certificate for mTLS authentication")
 		return ctrl.Result{}, err
 	}
 
 	pluginAddress := fmt.Sprintf("%s:%d", service.Name, pluginPort)
 
+	// Use custom server name if provided, otherwise default to service name
+	serverName := service.Annotations[utils.PluginServerNameAnnotationName]
+	if len(serverName) == 0 {
+		serverName = service.Name
+	}
+
 	err = r.Plugins.RegisterRemotePlugin(
 		pluginName,
 		pluginAddress,
 		&tls.Config{
-			ServerName: service.Name,
+			ServerName: serverName,
 			RootCAs:    serverCertificatePool,
 			Certificates: []tls.Certificate{
 				clientKeyPair,
@@ -230,7 +272,7 @@ func (r *PluginReconciler) mapSecretToPlugin(ctx context.Context, obj client.Obj
 	logger := log.FromContext(ctx)
 
 	var services corev1.ServiceList
-	if err := r.Client.List(
+	if err := r.List(
 		ctx,
 		&services,
 		client.HasLabels{utils.PluginNameLabelName},

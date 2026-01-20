@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,17 +13,23 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
 
 import (
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/tests"
@@ -35,7 +42,7 @@ import (
 )
 
 // Set of tests in which we test the concurrent disruption of both the primary
-// and the operator podutils, asserting that the latter is able to perform a pending
+// and the operator pods, asserting that the latter is able to perform a pending
 // failover once a new operator pod comes back available.
 var _ = Describe("Operator unavailable", Serial, Label(tests.LabelDisruptive, tests.LabelOperator), func() {
 	const (
@@ -84,16 +91,16 @@ var _ = Describe("Operator unavailable", Serial, Label(tests.LabelDisruptive, te
 				Expect(err).ToNot(HaveOccurred())
 
 				// Expect only 2 instances to be up and running
-				Eventually(func() int32 {
+				Eventually(func(g Gomega) {
 					podList := &corev1.PodList{}
 					err := env.Client.List(
 						env.Ctx, podList,
 						ctrlclient.InNamespace(namespace),
 						ctrlclient.MatchingLabels{utils.ClusterLabelName: clusterName},
 					)
-					Expect(err).ToNot(HaveOccurred())
-					return int32(len(podList.Items))
-				}, 120).Should(BeEquivalentTo(2))
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(podList.Items).To(HaveLen(2))
+				}, 120).Should(Succeed())
 
 				// And to stay like that
 				Consistently(func() int32 {
@@ -159,10 +166,8 @@ var _ = Describe("Operator unavailable", Serial, Label(tests.LabelDisruptive, te
 
 			By("deleting primary and operator pod", func() {
 				// Get operator pod name
-				podList := &corev1.PodList{}
-				err := env.Client.List(env.Ctx, podList, ctrlclient.InNamespace(operatorNamespace))
+				operatorPodName, err = operator.GetPodName(env.Ctx, env.Client)
 				Expect(err).ToNot(HaveOccurred())
-				operatorPodName = podList.Items[0].ObjectMeta.Name
 
 				// Force-delete the operator and the primary
 				quickDelete := &ctrlclient.DeleteOptions{
@@ -183,29 +188,27 @@ var _ = Describe("Operator unavailable", Serial, Label(tests.LabelDisruptive, te
 				wg.Wait()
 
 				// Expect only 2 instances to be up and running
-				Eventually(func() int32 {
+				Eventually(func(g Gomega) {
 					podList := &corev1.PodList{}
 					err := env.Client.List(
 						env.Ctx, podList, ctrlclient.InNamespace(namespace),
 						ctrlclient.MatchingLabels{utils.ClusterLabelName: "operator-unavailable"},
 					)
-					Expect(err).ToNot(HaveOccurred())
-					return int32(len(utils.FilterActivePods(podList.Items)))
-				}, 120).Should(BeEquivalentTo(2))
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(utils.FilterActivePods(podList.Items)).To(HaveLen(2))
+				}, 120).Should(Succeed())
 			})
 
 			By("verifying a new operator pod is now back", func() {
-				timeout := 120
+				timeout := 240
 				Eventually(func(g Gomega) {
-					podList := &corev1.PodList{}
-					err := env.Client.List(env.Ctx, podList, ctrlclient.InNamespace(operatorNamespace))
+					operatorPod, err := operator.GetPod(env.Ctx, env.Client)
 					g.Expect(err).ToNot(HaveOccurred())
-					g.Expect(podList.Items).To(HaveLen(1))
-					g.Expect(podList.Items[0].Name).NotTo(BeEquivalentTo(operatorPodName))
+					g.Expect(operatorPod.Name).NotTo(BeEquivalentTo(operatorPodName))
+					g.Expect(operator.IsReady(env.Ctx, env.Client, true)).To(BeTrue())
+					g.Expect(operator.PodRestarted(operatorPod)).To(BeFalse(),
+						"operator pod should not have any container restarts")
 				}, timeout).Should(Succeed())
-				Eventually(func() (bool, error) {
-					return operator.IsDeploymentReady(env.Ctx, env.Client)
-				}, timeout).Should(BeTrue())
 			})
 
 			// Expect a new primary to be elected and promoted
@@ -224,6 +227,20 @@ var _ = Describe("Operator unavailable", Serial, Label(tests.LabelDisruptive, te
 				}, timeout).Should(BeTrue())
 			})
 			AssertDataExpectedCount(env, tableLocator, 2)
+
+			// There is a chance that the webhook is not able to reach the new operator pod yet.
+			// This could make following tests fail, so we need to wait for the webhook to be working again.
+			By("verifying the webhook is working again", func() {
+				invalidCluster := &apiv1.Cluster{
+					ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "invalid"},
+					Spec:       apiv1.ClusterSpec{Instances: 1},
+				}
+				Eventually(func(g Gomega) {
+					err := env.Client.Create(env.Ctx, invalidCluster)
+					g.Expect(errors.IsInvalid(err)).To(BeTrue())
+					g.Expect(err).To(MatchError(ContainSubstring("spec.storage.size")))
+				}).WithTimeout(10 * time.Second).Should(Succeed())
+			})
 		})
 	})
 })

@@ -1,4 +1,11 @@
-# Service Management
+---
+id: service_management
+sidebar_position: 210
+title: Service management
+---
+
+# Service management
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 A PostgreSQL cluster should only be accessed via standard Kubernetes network
 services directly managed by CloudNativePG. For more details, refer to the

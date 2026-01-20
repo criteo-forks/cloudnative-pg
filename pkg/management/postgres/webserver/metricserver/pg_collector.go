@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package metricserver
@@ -173,19 +176,20 @@ func newMetrics() *metrics {
 			Namespace: PrometheusNamespace,
 			Subsystem: subsystem,
 			Name:      "first_recoverability_point",
-			Help:      "The first point of recoverability for the cluster as a unix timestamp",
+			Help: "The first point of recoverability for the cluster as a unix timestamp" +
+				" (Deprecated)",
 		}),
 		LastAvailableBackupTimestamp: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: PrometheusNamespace,
 			Subsystem: subsystem,
 			Name:      "last_available_backup_timestamp",
-			Help:      "The last available backup as a unix timestamp",
+			Help:      "The last available backup as a unix timestamp (Deprecated)",
 		}),
 		LastFailedBackupTimestamp: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: PrometheusNamespace,
 			Subsystem: subsystem,
 			Name:      "last_failed_backup_timestamp",
-			Help:      "The last failed backup as a unix timestamp",
+			Help:      "The last failed backup as a unix timestamp (Deprecated)",
 		}),
 		FencingOn: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: PrometheusNamespace,
@@ -503,21 +507,21 @@ func (e *Exporter) collectNodesUsed() {
 func (e *Exporter) collectFromPrimaryLastFailedBackupTimestamp() {
 	const errorLabel = "Collect.LastFailedBackupTimestamp"
 	e.setTimestampMetric(e.Metrics.LastFailedBackupTimestamp, errorLabel, func(cluster *apiv1.Cluster) string {
-		return cluster.Status.LastFailedBackup
+		return cluster.Status.LastFailedBackup //nolint:staticcheck
 	})
 }
 
 func (e *Exporter) collectFromPrimaryLastAvailableBackupTimestamp() {
 	const errorLabel = "Collect.LastAvailableBackupTimestamp"
 	e.setTimestampMetric(e.Metrics.LastAvailableBackupTimestamp, errorLabel, func(cluster *apiv1.Cluster) string {
-		return cluster.Status.LastSuccessfulBackup
+		return cluster.Status.LastSuccessfulBackup //nolint:staticcheck
 	})
 }
 
 func (e *Exporter) collectFromPrimaryFirstPointOnTimeRecovery() {
 	const errorLabel = "Collect.FirstRecoverabilityPoint"
 	e.setTimestampMetric(e.Metrics.FirstRecoverabilityPoint, errorLabel, func(cluster *apiv1.Cluster) string {
-		return cluster.Status.FirstRecoverabilityPoint
+		return cluster.Status.FirstRecoverabilityPoint //nolint:staticcheck
 	})
 }
 

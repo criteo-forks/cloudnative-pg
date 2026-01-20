@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package resources
@@ -59,7 +62,7 @@ func GetInstancePods(ctx context.Context, clusterName string) ([]corev1.Pod, cor
 	var managedPods []corev1.Pod
 	var primaryPod corev1.Pod
 	for idx := range pods.Items {
-		for _, owner := range pods.Items[idx].ObjectMeta.OwnerReferences {
+		for _, owner := range pods.Items[idx].OwnerReferences {
 			if owner.Kind == apiv1.ClusterKind && owner.Name == clusterName {
 				managedPods = append(managedPods, pods.Items[idx])
 				if specs.IsPodPrimary(pods.Items[idx]) {
@@ -74,10 +77,14 @@ func GetInstancePods(ctx context.Context, clusterName string) ([]corev1.Pod, cor
 // ExtractInstancesStatus extracts the instance status from the given pod list
 func ExtractInstancesStatus(
 	ctx context.Context,
+	cluster *apiv1.Cluster,
 	config *rest.Config,
 	filteredPods []corev1.Pod,
 ) (postgres.PostgresqlStatusList, []error) {
-	var result postgres.PostgresqlStatusList
+	result := postgres.PostgresqlStatusList{
+		IsReplicaCluster: cluster.IsReplica(),
+		CurrentPrimary:   cluster.Status.CurrentPrimary,
+	}
 	var errs []error
 
 	for idx := range filteredPods {

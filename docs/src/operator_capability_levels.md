@@ -1,4 +1,11 @@
+---
+id: operator_capability_levels
+sidebar_position: 490
+title: Operator capability levels
+---
+
 # Operator capability levels
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 These capabilities were implemented by CloudNativePG,
 classified using the
@@ -307,11 +314,8 @@ or a subsequent switchover of the cluster.
 ### Upgrade of the managed workload
 
 The operand can be upgraded using a declarative configuration approach as
-part of changing the CR and, in particular, the `imageName` parameter. The
-operator prevents major upgrades of PostgreSQL while making it possible to go
-in both directions in terms of minor PostgreSQL releases within a major
-version, enabling updates and rollbacks.
-
+part of changing the CR and, in particular, the `imageName` parameter.
+This is normally initiated by security updates or Postgres minor version updates.
 In the presence of standby servers, the operator performs rolling updates
 starting from the replicas. It does this by dropping the existing pod and creating a new
 one with the new requested operand image that reuses the underlying storage.
@@ -323,11 +327,24 @@ The setting to use depends on the business requirements, as the operation
 might generate some downtime for the applications. This downtime can range from a few seconds to
 minutes, based on the actual database workload.
 
+### Offline In-Place Major Upgrades of PostgreSQL
+
+CloudNativePG supports declarative offline in-place major upgrades when a new
+operand container image with a higher PostgreSQL major version is applied to a
+cluster. The upgrade can be triggered by updating the image tag via the
+`.spec.imageName` option or by using an image catalog to manage version
+changes. During the upgrade, all cluster pods are shut down to ensure data
+consistency. A new job is then created to validate the upgrade conditions,
+execute `pg_upgrade`, and create new directories for `PGDATA`, WAL files, and
+tablespaces if needed. Once the upgrade is complete, replicas are re-created.
+Failed upgrades can be rolled back.
+
 ### Display cluster availability status during upgrade
 
 At any time, convey the cluster's high availability status, for example,
 `Setting up primary`, `Creating a new replica`, `Cluster in healthy state`,
-`Switchover in progress`, `Failing over`, and `Upgrading cluster`.
+`Switchover in progress`, `Failing over`, `Upgrading cluster`, and `Upgrading
+Postgres major version`.
 
 ## Level 3: Full lifecycle
 
@@ -368,39 +385,37 @@ in the archive. In addition, `Instance Manager` checks
 the correctness of the archive destination by performing the `barman-cloud-check-wal-archive`
 command before beginning to ship the first set of WAL files.
 
-### PostgreSQL backups
+### PostgreSQL Backups
 
-The operator was designed to provide application-level backups using
-PostgreSQL’s native continuous hot backup technology based on
-physical base backups and continuous WAL archiving.
-Base backups can be saved on:
+CloudNativePG provides a pluggable interface (CNPG-I) for managing
+application-level backups using PostgreSQL’s native physical backup
+mechanisms—namely base backups and continuous WAL archiving. This
+design enables flexibility and extensibility while ensuring consistency and
+performance.
 
-- Kubernetes volume snapshots
-- Object stores (AWS S3 and S3-compatible, Azure Blob Storage, Google Cloud
-  Storage, and gateways like MinIO)
+The CloudNativePG Community officially supports the [Barman Cloud Plugin](https://cloudnative-pg.io/plugin-barman-cloud/),
+which enables continuous physical backups to object stores, along with full and
+Point-In-Time Recovery (PITR) capabilities.
 
-Base backups are defined at the cluster level, declaratively,
-through the `backup` parameter in the cluster definition.
+In addition to CNPG-I plugins, CloudNativePG also natively supports backups
+using Kubernetes volume snapshots, when supported by the underlying storage
+class and CSI driver.
 
-You can define base backups in two ways:
+You can initiate base backups in two ways:
 
-- On-demand, through the `Backup` custom resource definition
-- Scheduled, through the `ScheduledBackup`custom resource definition, using a cron-like syntax
+- On-demand, using the `Backup` custom resource
+- Scheduled, using the `ScheduledBackup` custom resource, with a cron-like
+  schedule format
 
-Volume snapshots rely directly on the Kubernetes API, which delegates this
-capability to the underlying storage classes and CSI drivers. Volume snapshot
-backups are suitable for very large database (VLDB) contexts.
+Volume snapshots leverage the Kubernetes API and are particularly effective for
+very large databases (VLDBs) due to their speed and storage efficiency.
 
-Object store backups rely on `barman-cloud-backup` for the job (distributed as
-part of the application container image) to relay backups in the same endpoint,
-alongside WAL files.
+Both volume snapshots and CNPG-I-based backups support:
 
-Both `barman-cloud-wal-restore` and `barman-cloud-backup` are distributed in
-the application container image under GNU GPL 3 terms.
-
-Object store backups and volume snapshot backups are taken while PostgreSQL is
-up and running (hot backups). Volume snapshots also support taking consistent
-database snapshots with cold backups.
+- Hot backups: Taken while PostgreSQL is running, ensuring minimal
+  disruption.
+- Cold backups: Performed by temporarily stopping PostgreSQL to ensure a
+  fully consistent snapshot, when required.
 
 ### Backups from a standby
 
@@ -412,8 +427,8 @@ operations.
 ### Full restore from a backup
 
 The operator enables you to bootstrap a new cluster (with its settings)
-starting from an existing and accessible backup, either on a volume snapshot
-or in an object store.
+starting from an existing and accessible backup, either on a volume snapshot,
+or in an object store, or via a plugin.
 
 Once the bootstrap process is completed, the operator initiates the instance in
 recovery mode. It replays all available WAL files from the specified archive,
@@ -496,24 +511,19 @@ scalability of PostgreSQL databases, ensuring a streamlined and optimized
 experience for managing large scale data storage in cloud-native environments.
 Support for temporary tablespaces is also included.
 
-### Startup, Liveness, and Readiness Probes
+### Customizable Startup, Liveness, and Readiness Probes
 
 CloudNativePG configures startup, liveness, and readiness probes for PostgreSQL
 containers, which are managed by the Kubernetes kubelet. These probes interact
-with the `/healthz` and `/readyz` endpoints exposed by the instance manager's
-web server to monitor the Pod's health and readiness.
-
-The startup and liveness probes use the `pg_isready` utility. A Pod is
-considered healthy if `pg_isready` returns an exit code of 0 (indicating the
-server is accepting connections) or 1 (indicating the server is rejecting
-connections, such as during startup).
-
-The readiness probe executes a simple SQL query (`;`) to verify that the
-PostgreSQL server is ready to accept client connections.
+with the `/startupz`, `/healthz`, and `/readyz` endpoints exposed by
+the instance manager's web server to monitor the Pod's health and readiness.
 
 All probes are configured with default settings but can be fully customized to
 meet specific needs, allowing for fine-tuning to align with your environment
 and workloads.
+
+For detailed configuration options and advanced usage,
+refer to the [Postgres instance manager](instance_manager.md) documentation.
 
 ### Rolling deployments
 
@@ -558,21 +568,12 @@ that, until the fence is lifted, data on the pod isn't modified by PostgreSQL
 and that you can investigate file system for debugging and troubleshooting
 purposes.
 
-### Hibernation (declarative)
+### Hibernation
 
 CloudNativePG supports [hibernation of a running PostgreSQL cluster](declarative_hibernation.md)
 in a declarative manner, through the `cnpg.io/hibernation` annotation.
 Hibernation enables saving CPU power by removing the database pods while
 keeping the database PVCs. This feature simulates scaling to 0 instances.
-
-### Hibernation (imperative)
-
-CloudNativePG supports [hibernation of a running PostgreSQL cluster](kubectl-plugin.md#cluster-hibernation)
-by way of the `cnpg` plugin. Hibernation shuts down all Postgres instances in the
-high-availability cluster and keeps a static copy of the PVC group of the
-primary. The copy contains `PGDATA` and WALs. The plugin enables you to exit the
-hibernation phase by resuming the primary and then recreating all the
-replicas, if they exist.
 
 ### Reuse of persistent volumes storage in pods
 

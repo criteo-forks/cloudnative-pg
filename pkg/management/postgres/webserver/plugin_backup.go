@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package webserver
@@ -19,12 +22,9 @@ package webserver
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
-	pgTime "github.com/cloudnative-pg/machinery/pkg/postgres/time"
 	"github.com/cloudnative-pg/machinery/pkg/stringset"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -33,7 +33,6 @@ import (
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	pluginClient "github.com/cloudnative-pg/cloudnative-pg/internal/cnpi/plugin/client"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cnpi/plugin/repository"
-	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/resources"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/resources/status"
@@ -74,39 +73,30 @@ func (b *PluginBackupCommand) invokeStart(ctx context.Context) {
 	contextLogger := log.FromContext(ctx).WithValues(
 		"pluginConfiguration", b.Backup.Spec.PluginConfiguration,
 		"backupName", b.Backup.Name,
-		"backupNamespace", b.Backup.Name)
+		"backupNamespace", b.Backup.Namespace)
 
 	plugins := repository.New()
-	availablePlugins, err := plugins.RegisterUnixSocketPluginsInPath(configuration.Current.PluginSocketDir)
-	if err != nil {
-		contextLogger.Error(err, "Error while discovering plugins")
-	}
 	defer plugins.Close()
 
-	availablePluginNamesSet := stringset.From(availablePlugins)
-
-	enabledPluginNamesSet := stringset.From(
-		apiv1.GetPluginConfigurationEnabledPluginNames(b.Cluster.Spec.Plugins))
-	availableAndEnabled := stringset.From(availablePluginNamesSet.Intersect(enabledPluginNamesSet).ToList())
-
-	if !availableAndEnabled.Has(b.Backup.Spec.PluginConfiguration.Name) {
-		b.markBackupAsFailed(
-			ctx,
-			fmt.Errorf("requested plugin is not available: %s", b.Backup.Spec.PluginConfiguration.Name),
-		)
-		return
-	}
-
-	cli, err := pluginClient.WithPlugins(
+	enabledPluginNamesSet := stringset.New()
+	enabledPluginNamesSet.Put(b.Backup.Spec.PluginConfiguration.Name)
+	cli, err := pluginClient.NewClient(
 		ctx,
-		plugins,
-		availableAndEnabled.ToList()...,
+		enabledPluginNamesSet,
 	)
 	if err != nil {
 		b.markBackupAsFailed(ctx, err)
 		return
 	}
 	defer cli.Close(ctx)
+
+	if !cli.HasPlugin(b.Backup.Spec.PluginConfiguration.Name) {
+		b.markBackupAsFailed(
+			ctx,
+			fmt.Errorf("requested plugin is not available: %s", b.Backup.Spec.PluginConfiguration.Name),
+		)
+		return
+	}
 
 	// record the backup beginning
 	contextLogger.Info("Plugin backup started")
@@ -173,33 +163,11 @@ func (b *PluginBackupCommand) invokeStart(ctx context.Context) {
 func (b *PluginBackupCommand) markBackupAsFailed(ctx context.Context, failure error) {
 	contextLogger := log.FromContext(ctx)
 
-	backupStatus := b.Backup.GetStatus()
-
 	// record the failure
 	contextLogger.Error(failure, "Backup failed")
 	b.Recorder.Event(b.Backup, "Normal", "Failed", "Backup failed")
 
-	// update backup status as failed
-	backupStatus.SetAsFailed(failure)
-	if err := postgres.PatchBackupStatusAndRetry(ctx, b.Client, b.Backup); err != nil {
-		contextLogger.Error(err, "Can't mark backup as failed")
-		// We do not terminate here because we still want to set the condition on the cluster.
-	}
-
-	// add backup failed condition to the cluster
-	if failErr := b.retryWithRefreshedCluster(ctx, func() error {
-		return status.PatchWithOptimisticLock(
-			ctx,
-			b.Client,
-			b.Cluster,
-			func(cluster *apiv1.Cluster) {
-				meta.SetStatusCondition(&cluster.Status.Conditions, apiv1.BuildClusterBackupFailedCondition(failure))
-				cluster.Status.LastFailedBackup = pgTime.GetCurrentTimestampWithFormat(time.RFC3339)
-			},
-		)
-	}); failErr != nil {
-		contextLogger.Error(failErr, "while setting cluster condition for failed backup")
-	}
+	_ = status.FlagBackupAsFailed(ctx, b.Client, b.Backup, b.Cluster, failure)
 }
 
 func (b *PluginBackupCommand) retryWithRefreshedCluster(

@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,12 +13,14 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package report
 
 import (
-	admissionv1 "k8s.io/api/admissionregistration/v1"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -60,7 +63,9 @@ func passConfigMap(configMap corev1.ConfigMap) corev1.ConfigMap {
 // may change the behavior. See https://pkg.go.dev/k8s.io/api@v0.23.5/admissionregistration/v1#WebhookClientConfig
 // If the CABundle is present, override with a small string. The one chosen is "-"
 // which will print in Base64 as "LQ=="
-func redactWebhookClientConfig(config admissionv1.WebhookClientConfig) admissionv1.WebhookClientConfig {
+func redactWebhookClientConfig(
+	config admissionregistrationv1.WebhookClientConfig,
+) admissionregistrationv1.WebhookClientConfig {
 	if len(config.CABundle) != 0 {
 		config.CABundle = []byte("-") // will print in Base64 as "LQ=="
 	}

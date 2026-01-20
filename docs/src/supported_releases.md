@@ -1,4 +1,11 @@
+---
+id: supported_releases
+sidebar_position: 560
+title: Supported releases
+---
+
 # Supported releases
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 <!-- Inspired by https://github.com/istio/istio.io/blob/933b896c/content/en/docs/releases/supported-releases/index.md -->
 <!-- Inspired by https://github.com/cert-manager/website/blob/009c5e41/content/docs/installation/supported-releases.md -->
@@ -7,7 +14,7 @@
 releases of CloudNativePG*.
 
 We are committed to providing support for the latest minor release, with a
-dedication to launching a new minor release every two months. Each release
+dedication to launching a new minor release every three months. Each release
 remains fully supported until reaching its designated "End of Life" date, as
 outlined in the [support status table for CloudNativePG releases](#support-status-of-cloudnativepg-releases).
 This includes an additional 3-month assistance window to facilitate seamless
@@ -82,11 +89,12 @@ Git tags for versions are prefixed with `v`.
 <!-- TODO: Complete dates and versions below -->
 | Version         | Currently supported  | Release date | End of life     | Supported Kubernetes versions | Tested, but not supported | Supported Postgres versions |
 |-----------------|----------------------|--------------|-----------------|-------------------------------|---------------------------|-----------------------------|
-| 1.25.x          | Yes                  | Dec 23, 2024 | ~ May/Jun, 2025 | 1.29, 1.30, 1.31, 1.32        | 1.27, 1.28                | 13 - 17                     |
-| 1.24.x          | Yes                  | Aug 22, 2024 | Mar 23, 2025    | 1.28, 1.29, 1.30, 1.31        | 1.27                      | 13 - 17                     |
+| 1.28.x          | Yes                  |  9 Dec 2025  | ~  Jun 2026     | 1.32, 1.33, 1.34              | 1.31, 1.30, 1.29          | 14 - 18                     |
+| 1.27.x          | Yes                  | 12 Aug 2025  |  9 Mar 2026     | 1.31, 1.32, 1.33              | 1.30, 1.29                | 13 - 18                     |
+| 1.26.x          | No                   | May 23, 2025 | ~ Nov 2025      | 1.30, 1.31, 1.32, 1.33        | 1.29                      | 13 - 17                     |
 | main            | No, development only |              |                 |                               |                           | 13 - 17                     |
 
-<!-- <sup>1</sup> _PostgreSQL 13 will be supported until November 13, 2025._ -->
+<sup>1</sup> _PostgreSQL 13 will be supported until November 13, 2025._
 
 The list of supported Kubernetes versions in the table depends on what
 the CloudNativePG maintainers think is reasonable to support and to test.
@@ -119,11 +127,11 @@ version of PostgreSQL, we might not be able to help you.
 
 ## Upcoming releases
 
-| Version | Release date | End of life   |
-|---------|--------------|---------------|
-| 1.26.0  | Mar, 2025    | Aug/Sep, 2025 |
-| 1.27.0  | Jun, 2025    | Dec, 2025     |
-| 1.28.0  | Sep, 2025    | Mar/Apr, 2025 |
+| Version | Release date | End of life |
+|---------|--------------|-------------|
+| 1.27.0  | ~ Aug, 2025  | ~ Feb, 2026 |
+| 1.28.0  | ~ Nov, 2025  | ~ May, 2026 |
+| 1.29.0  | ~ Feb, 2025  | ~ Aug, 2026 |
 
 !!! Note
     Feature freeze occurs 1-2 weeks before the release, at which point a
@@ -140,6 +148,7 @@ version of PostgreSQL, we might not be able to help you.
 
 | Version         | Release date      | End of life         | Compatible Kubernetes versions |
 |-----------------|-------------------|---------------------|--------------------------------|
+| 1.24.x          | Aug 22, 2024      | May 23, 2025        | 1.28, 1.29, 1.30, 1.31         |
 | 1.23.x          | April 24, 2024    | November 24, 2024   | 1.27, 1.28, 1.29               |
 | 1.22.x          | December 21, 2023 | July 24, 2024       | 1.26, 1.27, 1.28               |
 | 1.21.x          | October 12, 2023  | Jun 12, 2024        | 1.25, 1.26, 1.27, 1.28         |
@@ -181,10 +190,14 @@ Only the last patch release of each branch is supported.
 We offer two types of support:
 
 Technical support
-:   Technical assistance is offered on a best-effort basis for supported
-    releases only. You can request support from the community on the
-    [CloudNativePG Slack](https://cloudnativepg.slack.com/) (in the `#general` channel),
-    or using [GitHub Discussions](https://github.com/cloudnative-pg/cloudnative-pg/discussions).
+:   Technical assistance is offered on a best-effort basis and is limited to
+    supported releases only.  For help, you can reach out to the community via the
+    [#cloudnativepg-users](https://cloud-native.slack.com/archives/C08MAUJ7NPM)
+    channel on the CNCF Slack workspace (if you're not yet a member, you can
+    [join the workspace](https://communityinviter.com/apps/cloud-native/cncf)).
+    Alternatively, you can post your questions in
+    the [GitHub Discussions](https://github.com/cloudnative-pg/cloudnative-pg/discussions)
+    section of the CloudNativePG repository.
 
 Security and bug fixes
 :   We backport important bug fixes — including security fixes - to all
@@ -192,7 +205,7 @@ Security and bug fixes
     *"Does this backport improve `CloudNativePG`, bearing in mind that we really
     value stability for already-released versions?"*
 
-If you're looking for professional support, see the
-[Support page in the website](https://cloudnative-pg.io/support/).
-The vendors listed there might provide service level agreements that included
-extended support timeframes.
+If you’re looking for professional support, please refer to the
+[Support page on our website](https://cloudnative-pg.io/support/).
+The vendors listed there may offer service level agreements (SLA), including
+extended support periods and additional services.

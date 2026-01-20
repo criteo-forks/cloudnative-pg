@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package status
@@ -28,7 +31,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("getPrimaryStartTime", func() {
+var _ = Describe("getPrimaryPromotionTime", func() {
 	var cluster *apiv1.Cluster
 
 	Context("when CurrentPrimaryTimestamp is empty", func() {
@@ -41,7 +44,7 @@ var _ = Describe("getPrimaryStartTime", func() {
 		})
 
 		It("should return an empty string", func() {
-			Expect(getPrimaryStartTime(cluster)).To(Equal(""))
+			Expect(getPrimaryPromotionTime(cluster)).To(Equal(""))
 		})
 	})
 
@@ -57,8 +60,8 @@ var _ = Describe("getPrimaryStartTime", func() {
 				},
 			}
 
-			expected := fmt.Sprintf("%s (uptime %s)", currentPrimaryTimestamp.Round(time.Second), uptime)
-			Expect(getPrimaryStartTimeIdempotent(cluster, now)).To(Equal(expected))
+			expected := fmt.Sprintf("%s (%s)", currentPrimaryTimestamp.Round(time.Second), uptime)
+			Expect(getPrimaryPromotionTimeIdempotent(cluster, now)).To(Equal(expected))
 		})
 	})
 
@@ -72,7 +75,7 @@ var _ = Describe("getPrimaryStartTime", func() {
 		})
 
 		It("should return the error message", func() {
-			Expect(getPrimaryStartTime(cluster)).To(ContainSubstring("error"))
+			Expect(getPrimaryPromotionTime(cluster)).To(ContainSubstring("error"))
 		})
 	})
 })

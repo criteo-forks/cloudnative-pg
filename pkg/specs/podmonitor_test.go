@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package specs
@@ -75,6 +78,7 @@ var _ = Describe("PodMonitor test", func() {
 
 		It("should create a monitoringv1.PodMonitor object with MetricRelabelConfigs rules", func() {
 			relabeledCluster := cluster.DeepCopy()
+			//nolint:staticcheck // Using deprecated fields during deprecation period
 			relabeledCluster.Spec.Monitoring.PodMonitorMetricRelabelConfigs = getMetricRelabelings()
 			mgr := NewClusterPodMonitorManager(relabeledCluster)
 			monitor := mgr.BuildPodMonitor()
@@ -86,6 +90,7 @@ var _ = Describe("PodMonitor test", func() {
 
 		It("should create a monitoringv1.PodMonitor object with RelabelConfigs rules", func() {
 			relabeledCluster := cluster.DeepCopy()
+			//nolint:staticcheck // Using deprecated fields during deprecation period
 			relabeledCluster.Spec.Monitoring.PodMonitorRelabelConfigs = getRelabelings()
 			mgr := NewClusterPodMonitorManager(relabeledCluster)
 			monitor := mgr.BuildPodMonitor()
@@ -97,7 +102,9 @@ var _ = Describe("PodMonitor test", func() {
 
 		It("should create a monitoringv1.PodMonitor object with MetricRelabelConfigs and RelabelConfigs rules", func() {
 			relabeledCluster := cluster.DeepCopy()
+			//nolint:staticcheck // Using deprecated fields during deprecation period
 			relabeledCluster.Spec.Monitoring.PodMonitorMetricRelabelConfigs = getMetricRelabelings()
+			//nolint:staticcheck // Using deprecated fields during deprecation period
 			relabeledCluster.Spec.Monitoring.PodMonitorRelabelConfigs = getRelabelings()
 			mgr := NewClusterPodMonitorManager(relabeledCluster)
 			monitor := mgr.BuildPodMonitor()
@@ -151,18 +158,20 @@ var _ = Describe("PodMonitor test", func() {
 		expectedEndpoint := monitoringv1.PodMetricsEndpoint{
 			Port:   &metricsPort,
 			Scheme: "https",
-			TLSConfig: &monitoringv1.SafeTLSConfig{
-				CA: monitoringv1.SecretOrConfigMap{
-					Secret: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "test-ca",
+			HTTPConfig: monitoringv1.HTTPConfig{
+				TLSConfig: &monitoringv1.SafeTLSConfig{
+					CA: monitoringv1.SecretOrConfigMap{
+						Secret: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: "test-ca",
+							},
+							Key: certs.CACertKey,
 						},
-						Key: certs.CACertKey,
 					},
+					Cert:               monitoringv1.SecretOrConfigMap{},
+					ServerName:         ptr.To(cluster.GetServiceReadWriteName()),
+					InsecureSkipVerify: ptr.To(true),
 				},
-				Cert:               monitoringv1.SecretOrConfigMap{},
-				ServerName:         ptr.To(cluster.GetServiceReadWriteName()),
-				InsecureSkipVerify: ptr.To(true),
 			},
 		}
 

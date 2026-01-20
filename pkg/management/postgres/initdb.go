@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package postgres contains the function about starting up,
@@ -46,6 +49,15 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/pool"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/system"
 )
+
+type connectionProvider interface {
+	// GetSuperUserDB returns the superuser database connection
+	GetSuperUserDB() (*sql.DB, error)
+	// GetTemplateDB returns the template database connection
+	GetTemplateDB() (*sql.DB, error)
+	// ConnectionPool returns the connection pool for this instance
+	ConnectionPool() pool.Pooler
+}
 
 // InitInfo contains all the info needed to bootstrap a new PostgreSQL instance
 type InitInfo struct {
@@ -289,7 +301,7 @@ func (info InitInfo) GetInstance() *Instance {
 
 // ConfigureNewInstance creates the expected users and databases in a new
 // PostgreSQL instance. If any error occurs, we return it
-func (info InitInfo) ConfigureNewInstance(instance *Instance) error {
+func (info InitInfo) ConfigureNewInstance(instance connectionProvider) error {
 	log.Info("Configuring new PostgreSQL instance")
 
 	dbSuperUser, err := instance.GetSuperUserDB()
@@ -297,20 +309,20 @@ func (info InitInfo) ConfigureNewInstance(instance *Instance) error {
 		return fmt.Errorf("while getting superuser database: %w", err)
 	}
 
-	var existsRole bool
-	userRow := dbSuperUser.QueryRow("SELECT COUNT(*) > 0 FROM pg_catalog.pg_roles WHERE rolname = $1",
-		info.ApplicationUser)
-	err = userRow.Scan(&existsRole)
-	if err != nil {
-		return err
-	}
-
-	if !existsRole {
-		_, err = dbSuperUser.Exec(fmt.Sprintf(
-			"CREATE ROLE %v LOGIN",
-			pgx.Identifier{info.ApplicationUser}.Sanitize()))
-		if err != nil {
+	if info.ApplicationUser != "" {
+		var existsRole bool
+		userRow := dbSuperUser.QueryRow("SELECT COUNT(*) > 0 FROM pg_catalog.pg_roles WHERE rolname = $1",
+			info.ApplicationUser)
+		if err = userRow.Scan(&existsRole); err != nil {
 			return err
+		}
+
+		if !existsRole {
+			if _, err = dbSuperUser.Exec(fmt.Sprintf(
+				"CREATE ROLE %v LOGIN",
+				pgx.Identifier{info.ApplicationUser}.Sanitize())); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -335,16 +347,22 @@ func (info InitInfo) ConfigureNewInstance(instance *Instance) error {
 	if err = info.executeSQLRefs(dbTemplate, info.PostInitTemplateSQLRefsFolder); err != nil {
 		return fmt.Errorf("could not execute post init application SQL refs: %w", err)
 	}
-	if info.ApplicationDatabase == "" {
+
+	filePath := filepath.Join(info.PgData, constants.CheckEmptyWalArchiveFile)
+	// We create the check empty wal archive file to tell that we should check if the
+	// destination path is empty
+	if err := fileutils.CreateEmptyFile(filePath); err != nil {
+		return fmt.Errorf("could not create %v file: %w", filePath, err)
+	}
+
+	if info.ApplicationUser == "" || info.ApplicationDatabase == "" {
 		return nil
 	}
 
 	var existsDB bool
-	dbRow := dbSuperUser.QueryRow(
-		"SELECT COUNT(*) > 0 FROM pg_catalog.pg_database WHERE datname = $1",
+	dbRow := dbSuperUser.QueryRow("SELECT COUNT(*) > 0 FROM pg_catalog.pg_database WHERE datname = $1",
 		info.ApplicationDatabase)
-	err = dbRow.Scan(&existsDB)
-	if err != nil {
+	if err = dbRow.Scan(&existsDB); err != nil {
 		return err
 	}
 
@@ -369,13 +387,6 @@ func (info InitInfo) ConfigureNewInstance(instance *Instance) error {
 
 	if err = info.executeSQLRefs(appDB, info.PostInitApplicationSQLRefsFolder); err != nil {
 		return fmt.Errorf("could not execute post init application SQL refs: %w", err)
-	}
-
-	filePath := filepath.Join(info.PgData, constants.CheckEmptyWalArchiveFile)
-	// We create the check empty wal archive file to tell that we should check if the
-	// destination path it is empty
-	if err := fileutils.CreateEmptyFile(filepath.Clean(filePath)); err != nil {
-		return fmt.Errorf("could not create %v file: %w", filePath, err)
 	}
 
 	return nil
@@ -503,7 +514,7 @@ func (info InitInfo) Bootstrap(ctx context.Context) error {
 
 	// In case of import bootstrap, we restore the standard configuration file content
 	if isImportBootstrap {
-		/// Write standard replication configuration
+		// Write standard replication configuration
 		if _, err = configurePostgresOverrideConfFile(info.PgData, primaryConnInfo, ""); err != nil {
 			return fmt.Errorf("while configuring Postgres for replication: %w", err)
 		}

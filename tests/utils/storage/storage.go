@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package storage provides functions to manage enything related to storage
@@ -22,7 +25,7 @@ import (
 	"fmt"
 	"os"
 
-	volumesnapshot "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,7 +54,7 @@ func IsWalStorageEnabled(
 	namespace, clusterName string,
 ) (bool, error) {
 	cluster, err := clusterutils.Get(ctx, crudClient, namespace, clusterName)
-	if cluster.Spec.WalStorage == nil {
+	if cluster == nil || cluster.Spec.WalStorage == nil {
 		return false, err
 	}
 	return true, err
@@ -113,7 +116,7 @@ type EnvVarsForSnapshots struct {
 // SetSnapshotNameAsEnv sets the names of a PG_DATA, a PG_WAL and a list of PG_TABLESPACE snapshots from a
 // given snapshotList as env variables
 func SetSnapshotNameAsEnv(
-	snapshotList *volumesnapshot.VolumeSnapshotList,
+	snapshotList *volumesnapshotv1.VolumeSnapshotList,
 	backup *apiv1.Backup,
 	envVars EnvVarsForSnapshots,
 ) error {
@@ -167,8 +170,8 @@ func GetSnapshotList(
 	ctx context.Context,
 	crudClient client.Client,
 	namespace string,
-) (*volumesnapshot.VolumeSnapshotList, error) {
-	list := &volumesnapshot.VolumeSnapshotList{}
+) (*volumesnapshotv1.VolumeSnapshotList, error) {
+	list := &volumesnapshotv1.VolumeSnapshotList{}
 	err := crudClient.List(ctx, list, client.InNamespace(namespace))
 
 	return list, err

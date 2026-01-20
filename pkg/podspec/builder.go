@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package podspec contains various utilities to deal with Pod Specs
@@ -395,6 +398,28 @@ func (builder *Builder) WithInitContainerSecurityContext(
 			}
 		}
 	}
+	return builder
+}
+
+// WithInitContainerResources ensures that, if in the current status there is
+// an init container with the passed name and the resources are empty, the resources will be
+// set to the ones passed.
+// If `overwrite` is true the resources are overwritten even when they're not empty
+func (builder *Builder) WithInitContainerResources(
+	name string,
+	resources corev1.ResourceRequirements,
+	overwrite bool,
+) *Builder {
+	builder.WithInitContainer(name)
+
+	for idx, value := range builder.status.Spec.InitContainers {
+		if value.Name == name {
+			if overwrite || value.Resources.Limits == nil && value.Resources.Requests == nil {
+				builder.status.Spec.InitContainers[idx].Resources = resources
+			}
+		}
+	}
+
 	return builder
 }
 

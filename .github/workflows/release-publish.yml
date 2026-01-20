@@ -7,14 +7,12 @@ on:
     tags:
       - v*
 
-env:
-  GOLANG_VERSION: "1.24.x"
-  REGISTRY: "ghcr.io"
+permissions: read-all
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+env:
+  # renovate: datasource=golang-version depName=golang versioning=loose
+  GOLANG_VERSION: "1.25.5"
+  REGISTRY: "ghcr.io"
 
 jobs:
 
@@ -22,17 +20,19 @@ jobs:
     name: Evaluate release tag
     runs-on: ubuntu-24.04
     outputs:
-      is_latest: ${{ env.IS_LATEST }}
-      is_stable: ${{ env.IS_STABLE }}
+      is_latest: ${{ steps.check-release.outputs.is_latest }}
+      is_stable: ${{ steps.check-release.outputs.is_stable }}
+      is_rc: ${{ steps.check-release.outputs.is_rc }}
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
         with:
           # To identify the commit we need the history and all the tags.
           fetch-depth: 0
       -
         name: Check release version
+        id: check-release
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
           latest_release_branch=$(git branch -rl 'origin/release-*' | sort -r | head -n1 | sed -e 's/^.*\(release-.*\)/\1/')
@@ -45,18 +45,25 @@ jobs:
           if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             is_stable="true"
           fi
-          echo "IS_LATEST=${is_latest}" >> $GITHUB_ENV
-          echo "IS_STABLE=${is_stable}" >> $GITHUB_ENV
+          is_rc="false"
+          if [[ "$tag" =~ ^.*-rc[0-9]+$ ]]; then
+            is_rc="true"
+          fi
+          echo "is_latest=${is_latest}" >> $GITHUB_OUTPUT
+          echo "is_stable=${is_stable}" >> $GITHUB_OUTPUT
+          echo "is_rc=${is_rc}" >> $GITHUB_OUTPUT
 
   release:
     name: Create Github release
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     needs:
       - check-version
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
       -
         name: Get tag
         run: |
@@ -75,20 +82,24 @@ jobs:
             /src/docs/src/${{ env.FILE }}
       -
         name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2
         with:
           body_path: release_notes.md
           draft: false
           name: v${{ env.TAG }}
           files: releases/cnpg-${{ env.VERSION }}.yaml
           make_latest: ${{ needs.check-version.outputs.is_latest == 'true' && needs.check-version.outputs.is_stable == 'true' }}
-          prerelease: ${{ needs.check-version.outputs.is_stable == 'false' }}
+          prerelease: ${{ needs.check-version.outputs.is_stable == 'false' || needs.check-version.outputs.is_rc == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-binaries:
     name: Build containers
     runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      contents: write
+      id-token: write
     needs:
       - check-version
     outputs:
@@ -96,17 +107,17 @@ jobs:
       author_name: ${{ steps.build-meta.outputs.author_name }}
       author_email: ${{ steps.build-meta.outputs.author_email }}
       platforms: ${{ env.PLATFORMS }}
-      ubi_img: ${{ fromJSON(steps.bake-push.outputs.metadata)['ubi']['image.name'] }}
+      olm_img: ${{ steps.olm-image.outputs.olm_image }}
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
         with:
           # To identify the commit we need the history and all the tags.
           fetch-depth: 0
       -
         name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
         with:
           go-version: ${{ env.GOLANG_VERSION }}
           check-latest: true
@@ -136,7 +147,7 @@ jobs:
       -
         name: Import GPG key
         id: import_gpg
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
@@ -150,7 +161,7 @@ jobs:
           echo "$GPG_PRIVATE_KEY" > gpg_signing_key.asc
       -
         name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           distribution: goreleaser
           version: v2
@@ -167,7 +178,7 @@ jobs:
         if: |
           needs.check-version.outputs.is_latest == 'true' &&
           needs.check-version.outputs.is_stable == 'true'
-        uses: rajatjindal/krew-release-bot@v0.0.47
+        uses: rajatjindal/krew-release-bot@3d9faef30a82761d610544f62afddca00993eef9 # v0.0.47
         with:
           krew_template_file: dist/krew/cnpg.yaml
       -
@@ -179,22 +190,22 @@ jobs:
           echo "PLATFORMS=${platforms}" >> $GITHUB_ENV
       -
         name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: ${{ env.PLATFORMS }}
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
       -
         name: Login to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       -
         name: Build and push
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6
         id: bake-push
         env:
           environment: "production"
@@ -210,50 +221,66 @@ jobs:
           targets: "default"
       -
         name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         # See https://github.blog/security/supply-chain-security/safeguard-container-signing-capability-actions/
         # and https://github.com/actions/starter-workflows/blob/main/ci/docker-publish.yml for more details on
         # how to use cosign.
-      - name: Sign images
+      -
+        name: Sign images
         run: |
           images=$(echo '${{ steps.bake-push.outputs.metadata }}' |
             jq -r '.[] | (."image.name" | sub(",.*";"" )) + "@" + ."containerimage.digest"'
           )
           cosign sign --yes ${images}
+      -
+        # Bake returns all the tags for a target's variant in a comma separated list.
+        # We only care about a single tag for OLM, so we remove the "latest" tag and
+        # pick the first entry in order from what's left in the list
+        name: Image for OLM
+        id: olm-image
+        env:
+          ubi_tags: ${{ fromJSON(steps.bake-push.outputs.metadata)['ubi']['image.name'] }}
+        run: |
+          echo "olm_image=$(echo "$ubi_tags" | tr ',' '\n' | grep -v 'latest' | sed 's/^ *//g' | head -n 1)" >> $GITHUB_OUTPUT
 
   olm-bundle:
     name: Create OLM bundle and catalog
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
     needs:
       - check-version
       - release-binaries
     if: |
       (always() && !cancelled()) &&
       needs.release-binaries.result == 'success' &&
-      needs.check-version.outputs.is_latest == 'true' &&
-      needs.check-version.outputs.is_stable == 'true'
+      (
+        needs.check-version.outputs.is_latest == 'true' ||
+        needs.check-version.outputs.is_rc == 'true'
+      )
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
         with:
           fetch-depth: 0
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: ${{ needs.release-binaries.outputs.platforms }}
 
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
         with:
           go-version: ${{ env.GOLANG_VERSION }}
           check-latest: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
 
       - name: Login to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -261,11 +288,11 @@ jobs:
 
       - name: Set bundle variables
         env:
-          UBI_IMG: ${{ needs.release-binaries.outputs.ubi_img }}
+          OLM_IMG: ${{ needs.release-binaries.outputs.olm_img }}
         run: |
-          echo "CONTROLLER_IMG=${UBI_IMG}" >> $GITHUB_ENV
-          echo "BUNDLE_IMG=${UBI_IMG}-bundle" >> $GITHUB_ENV
-          echo "CATALOG_IMG=${UBI_IMG}-catalog" >> $GITHUB_ENV
+          echo "CONTROLLER_IMG=${OLM_IMG}" >> $GITHUB_ENV
+          echo "BUNDLE_IMG=${OLM_IMG}-bundle" >> $GITHUB_ENV
+          echo "CATALOG_IMG=${OLM_IMG}-catalog" >> $GITHUB_ENV
 
       - name: Create bundle
         env:
@@ -276,7 +303,7 @@ jobs:
           make olm-catalog
 
       - name: Archive the bundle manifests
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: bundle
           path: |
@@ -297,14 +324,14 @@ jobs:
       VERSION: ${{ needs.release-binaries.outputs.version }}
     steps:
       - name: Checkout community-operators
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
         with:
           repository: k8s-operatorhub/community-operators
           fetch-depth: 0
           persist-credentials: false
 
       - name: Download the bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: bundle
 
@@ -315,7 +342,7 @@ jobs:
           rm -fr cloudnative-pg-catalog.yaml bundle.Dockerfile *.zip bundle/
 
       - name: Create Remote Pull Request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@84ae59a2cdc2258d6fa0732dd66352dddae2a412 # v7
         with:
           token: ${{ secrets.REPO_GHA_PAT }}
           commit-message: "operator cloudnative-pg (${{ env.VERSION }})"
@@ -374,7 +401,7 @@ jobs:
     steps:
       -
         name: Checkout artifact
-        uses: actions/checkout@v4
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
         with:
           repository: cloudnative-pg/artifacts
           token: ${{ secrets.REPO_GHA_PAT }}
@@ -387,7 +414,7 @@ jobs:
           git config user.name "${{ needs.release-binaries.outputs.author_name }}"
       -
         name: Download the bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: bundle
       -
@@ -409,7 +436,7 @@ jobs:
           git commit -sm "${COMMIT_MESSAGE}"
       -
         name: Push commit
-        uses: ad-m/github-push-action@v0.8.0
+        uses: ad-m/github-push-action@77c5b412c50b723d2a4fbc6d71fb5723bcd439aa # v1.0.0
         with:
           github_token: ${{ secrets.REPO_GHA_PAT }}
           repository: cloudnative-pg/artifacts

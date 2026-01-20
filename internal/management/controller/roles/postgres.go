@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package roles
@@ -307,7 +310,7 @@ func appendInRoleOptions(role DatabaseRole, query *strings.Builder) {
 			quotedInRoles[i] = pgx.Identifier{inRole}.Sanitize()
 		}
 
-		query.WriteString(fmt.Sprintf(" IN ROLE %s ", strings.Join(quotedInRoles, ",")))
+		fmt.Fprintf(query, " IN ROLE %s ", strings.Join(quotedInRoles, ","))
 	}
 }
 
@@ -354,7 +357,7 @@ func appendRoleOptions(role DatabaseRole, query *strings.Builder) {
 		query.WriteString(" NOSUPERUSER")
 	}
 
-	query.WriteString(fmt.Sprintf(" CONNECTION LIMIT %d", role.ConnectionLimit))
+	fmt.Fprintf(query, " CONNECTION LIMIT %d", role.ConnectionLimit)
 }
 
 func appendPasswordOption(role DatabaseRole, query *strings.Builder) {
@@ -366,7 +369,7 @@ func appendPasswordOption(role DatabaseRole, query *strings.Builder) {
 	case !role.password.Valid:
 		query.WriteString(" PASSWORD NULL")
 	default:
-		query.WriteString(fmt.Sprintf(" PASSWORD %s", pq.QuoteLiteral(role.password.String)))
+		fmt.Fprintf(query, " PASSWORD %s", pq.QuoteLiteral(role.password.String))
 	}
 
 	if role.ValidUntil.Valid {
@@ -376,6 +379,6 @@ func appendPasswordOption(role DatabaseRole, query *strings.Builder) {
 		} else {
 			value = role.ValidUntil.InfinityModifier.String()
 		}
-		query.WriteString(fmt.Sprintf(" VALID UNTIL %s", pq.QuoteLiteral(value)))
+		fmt.Fprintf(query, " VALID UNTIL %s", pq.QuoteLiteral(value))
 	}
 }

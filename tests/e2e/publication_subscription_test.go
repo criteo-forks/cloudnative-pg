@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -154,7 +157,7 @@ var _ = Describe("Publication and Subscription", Label(tests.LabelPublicationSub
 
 				Eventually(func(g Gomega) {
 					err := env.Client.Get(env.Ctx, databaseNamespacedName, databaseObject)
-					Expect(err).ToNot(HaveOccurred())
+					g.Expect(err).ToNot(HaveOccurred())
 					g.Expect(databaseObject.Status.Applied).Should(HaveValue(BeTrue()))
 				}, 300).WithPolling(10 * time.Second).Should(Succeed())
 			})
@@ -187,7 +190,7 @@ var _ = Describe("Publication and Subscription", Label(tests.LabelPublicationSub
 				Eventually(func(g Gomega) {
 					pub := &apiv1.Publication{}
 					err := env.Client.Get(env.Ctx, pubNamespacedName, pub)
-					Expect(err).ToNot(HaveOccurred())
+					g.Expect(err).ToNot(HaveOccurred())
 					g.Expect(pub.Status.Applied).Should(HaveValue(BeTrue()))
 				}, 300).WithPolling(10 * time.Second).Should(Succeed())
 			})
@@ -220,7 +223,7 @@ var _ = Describe("Publication and Subscription", Label(tests.LabelPublicationSub
 				Eventually(func(g Gomega) {
 					sub := &apiv1.Subscription{}
 					err := env.Client.Get(env.Ctx, pubNamespacedName, sub)
-					Expect(err).ToNot(HaveOccurred())
+					g.Expect(err).ToNot(HaveOccurred())
 					g.Expect(sub.Status.Applied).Should(HaveValue(BeTrue()))
 				}, 300).WithPolling(10 * time.Second).Should(Succeed())
 			})
@@ -307,7 +310,25 @@ var _ = Describe("Publication and Subscription", Label(tests.LabelPublicationSub
 					DatabaseName: dbname,
 					TableName:    tableName,
 				}
-				AssertDataExpectedCount(env, tableLocator, 2)
+				Eventually(func(g Gomega) int {
+					row, err := postgres.RunQueryRowOverForward(
+						env.Ctx,
+						env.Client,
+						env.Interface,
+						env.RestClientConfig,
+						tableLocator.Namespace,
+						tableLocator.ClusterName,
+						tableLocator.DatabaseName,
+						apiv1.ApplicationUserSecretSuffix,
+						fmt.Sprintf("SELECT COUNT(*) FROM %s", tableLocator.TableName),
+					)
+					g.Expect(err).ToNot(HaveOccurred())
+
+					var nRows int
+					err = row.Scan(&nRows)
+					g.Expect(err).ToNot(HaveOccurred())
+					return nRows
+				}, 300).Should(BeEquivalentTo(2))
 			})
 
 			By("removing the objects", func() {

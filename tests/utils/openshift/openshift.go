@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package openshift provides functions to work with OLM CRDs
@@ -24,7 +27,7 @@ import (
 
 	"github.com/blang/semver"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -109,7 +112,7 @@ func GetOpenshiftVersion(ctx context.Context, restConfig *rest.Config) (semver.V
 		Group:    "operator.openshift.io",
 		Version:  "v1",
 		Resource: "openshiftcontrollermanagers",
-	}).Get(ctx, "cluster", v1.GetOptions{})
+	}).Get(ctx, "cluster", metav1.GetOptions{})
 	if err != nil {
 		return semver.Version{}, err
 	}

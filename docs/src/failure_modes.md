@@ -1,4 +1,11 @@
+---
+id: failure_modes
+sidebar_position: 140
+title: Failure Modes
+---
+
 # Failure Modes
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 !!! Note
     In previous versions of CloudNativePG, this page included specific failure

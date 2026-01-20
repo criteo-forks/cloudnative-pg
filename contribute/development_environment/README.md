@@ -47,6 +47,7 @@ environment variable:
 - [golangci-lint](https://github.com/golangci/golangci-lint)
 - [goreleaser](https://goreleaser.com/)
 - [Operator SDK CLI](https://sdk.operatorframework.io/)
+- [Helm](https://helm.sh/)
 
 In addition, check that the following packages are installed in your system:
 
@@ -57,7 +58,6 @@ In addition, check that the following packages are installed in your system:
 - `gpg`,
 - `jq`,
 - `make`,
-- `pandoc`,
 - `sed`,
 - `tar`,
 - `util-linux`,
@@ -83,7 +83,8 @@ components in your Mac OS X system:
 brew install go \
   kind \
   golangci/tap/golangci-lint \
-  goreleaser
+  goreleaser \
+  helm
 ```
 
 Please note that bash v5.0+ is required, this can be installed with:
@@ -111,7 +112,7 @@ brew install jq \
   gnu-getopt \
   gnu-sed \
   gnu-tar \
-  pandoc \
+  helm \
   zlib
 ```
 
@@ -180,12 +181,14 @@ build and deploy:
 ```shell
 cd cloudnative-pg
 git checkout main
-make deploy-locally
+./hack/setup-cluster.sh create load deploy
 ```
 
 This will build the operator based on the `main` branch content, create a
 `kind` cluster in your workstation with a container registry that provides the
 operator image that you just built.
+
+*Note:* For a list of options, run `./hack/setup-cluster.sh`.
 
 > **NOTE:** In case of errors, make sure that you have the latest versions of the Go
 > binaries in your system. For this reason, from time to time, we recommend
@@ -202,7 +205,7 @@ kubectl get deploy -n cnpg-system cnpg-controller-manager
 Now that your system has been validated, you can tear down the local cluster with:
 
 ```shell
-make kind-cluster-destroy
+./hack/setup-cluster.sh destroy
 ```
 
 Congratulations, you have a suitable development environment. You are now able

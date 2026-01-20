@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package report
@@ -20,7 +23,7 @@ import (
 	"context"
 	"fmt"
 
-	v1 "k8s.io/api/admissionregistration/v1"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -28,14 +31,19 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin"
 )
 
-func getWebhooks(ctx context.Context, stopRedact bool) (
-	*v1.MutatingWebhookConfigurationList, *v1.ValidatingWebhookConfigurationList, error,
+func getWebhooks(
+	ctx context.Context,
+	stopRedact bool,
+) (
+	*admissionregistrationv1.MutatingWebhookConfigurationList,
+	*admissionregistrationv1.ValidatingWebhookConfigurationList,
+	error,
 ) {
 	var (
-		mutatingWebhookConfigList   v1.MutatingWebhookConfigurationList
-		validatingWebhookConfigList v1.ValidatingWebhookConfigurationList
-		mWebhookConfig              v1.MutatingWebhookConfigurationList
-		vWebhookConfig              v1.ValidatingWebhookConfigurationList
+		mutatingWebhookConfigList   admissionregistrationv1.MutatingWebhookConfigurationList
+		validatingWebhookConfigList admissionregistrationv1.ValidatingWebhookConfigurationList
+		mWebhookConfig              admissionregistrationv1.MutatingWebhookConfigurationList
+		vWebhookConfig              admissionregistrationv1.ValidatingWebhookConfigurationList
 	)
 
 	if err := plugin.Client.List(ctx, &mutatingWebhookConfigList); err != nil {
@@ -88,7 +96,7 @@ func getWebhooks(ctx context.Context, stopRedact bool) (
 
 func getWebhookService(
 	ctx context.Context,
-	mutatingWebhookList *v1.MutatingWebhookConfigurationList,
+	mutatingWebhookList *admissionregistrationv1.MutatingWebhookConfigurationList,
 ) (corev1.Service, error) {
 	if len(mutatingWebhookList.Items) == 0 ||
 		len(mutatingWebhookList.Items[0].Webhooks) == 0 {

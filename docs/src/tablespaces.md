@@ -1,4 +1,11 @@
+---
+id: tablespaces
+sidebar_position: 250
+title: Tablespaces
+---
+
 # Tablespaces
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 A tablespace is a robust and widely embraced feature in database
 management systems. It offers a powerful means to enhance the vertical
@@ -146,11 +153,13 @@ spec:
     size: 10Gi
   tablespaces:
     - name: current
-      size: 100Gi
-      storageClass: fastest
+      storage:        
+        size: 100Gi
+        storageClass: fastest
     - name: this_year
-      size: 500Gi
-      storageClass: balanced
+      storage:
+        size: 500Gi
+        storageClass: balanced
 ```
 
 The `yardbirds` cluster example requests 4 persistent volume claims using
@@ -250,6 +259,10 @@ tablespace map) both on object stores and volume snapshots.
     incomplete view of the tablespaces from the replica and thus an incomplete
     backup. The lag will be resolved in a maximum of 5 minutes, with the next
     reconciliation.
+
+!!! Warning
+    When you add or remove a tablespace in an existing cluster, recovery
+    from WAL will fail until you take a new base backup.
 
 Once a cluster with tablespaces has a base backup, you can restore a
 new cluster from it. When it comes to the recovery side, it's your

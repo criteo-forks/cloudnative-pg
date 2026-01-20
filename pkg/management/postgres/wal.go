@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package postgres
@@ -34,7 +37,7 @@ var errNoWalArchivePresent = errors.New("no wal-archive present")
 // On primary, it could run even before the first WAL has completed. For this reason it
 // could require a WAL switch, to quicken the check.
 // On standby, the mere existence of the standby guarantees that a WAL file has already been generated
-// by the pg_basebakup used to prime the standby data directory, so we check only if the WAL
+// by the pg_basebackup used to prime the standby data directory, so we check only if the WAL
 // archive process is not failing.
 func ensureWalArchiveIsWorking(instance *Instance) error {
 	isPrimary, err := instance.IsPrimary()
@@ -43,7 +46,7 @@ func ensureWalArchiveIsWorking(instance *Instance) error {
 	}
 
 	if isPrimary {
-		return newWalArchiveBootstrapperForPrimary().ensureFirstWalArchived(retryUntilWalArchiveWorking)
+		return newWalArchiveBootstrapperForPrimary().ensureFirstWalArchived(instance, retryUntilWalArchiveWorking)
 	}
 
 	return newWalArchiveAnalyzerForReplicaInstance(instance.GetPrimaryConnInfo()).
@@ -62,7 +65,7 @@ func newWalArchiveAnalyzerForReplicaInstance(primaryConnInfo string) *walArchive
 		dbFactory: func() (*sql.DB, error) {
 			db, openErr := sql.Open(
 				"pgx",
-				fmt.Sprintf("%s dbname=%s", primaryConnInfo, "postgres"),
+				primaryConnInfo,
 			)
 			if openErr != nil {
 				log.Error(openErr, "can not open postgres database")
@@ -143,8 +146,18 @@ func newWalArchiveBootstrapperForPrimary() *walArchiveBootstrapper {
 	}
 }
 
-func (w *walArchiveBootstrapper) ensureFirstWalArchived(backoff wait.Backoff) error {
-	return retry.OnError(backoff, resources.RetryAlways, func() error {
+var errPrimaryDemoted = errors.New("primary was demoted while waiting for the first wal-archive")
+
+func (w *walArchiveBootstrapper) ensureFirstWalArchived(instance *Instance, backoff wait.Backoff) error {
+	return retry.OnError(backoff, func(err error) bool { return !errors.Is(err, errPrimaryDemoted) }, func() error {
+		isPrimary, err := instance.IsPrimary()
+		if err != nil {
+			return fmt.Errorf("error checking primary: %w", err)
+		}
+		if !isPrimary {
+			return errPrimaryDemoted
+		}
+
 		db, err := w.dbFactory()
 		if err != nil {
 			return err

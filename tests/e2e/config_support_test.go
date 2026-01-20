@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package e2e
@@ -21,6 +24,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2/types"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/cloudnative-pg/cloudnative-pg/tests"
@@ -45,16 +50,47 @@ var _ = Describe("Config support", Serial, Ordered, Label(tests.LabelDisruptive,
 		level                          = tests.Low
 	)
 	var operatorNamespace, namespace string
+	var initialConfigMap *corev1.ConfigMap
+	var initialSecret *corev1.Secret
 
 	BeforeEach(func() {
 		if testLevelEnv.Depth < int(level) {
 			Skip("Test depth is lower than the amount requested for this test")
 		}
+	})
 
+	BeforeAll(func() {
 		operatorDeployment, err := operator.GetDeployment(env.Ctx, env.Client)
 		Expect(err).ToNot(HaveOccurred())
-
 		operatorNamespace = operatorDeployment.GetNamespace()
+
+		// Save the initial configMap
+		initialConfigMap = &corev1.ConfigMap{}
+		err = env.Client.Get(env.Ctx, ctrlclient.ObjectKey{Namespace: operatorNamespace, Name: configName},
+			initialConfigMap)
+		if !apierrors.IsNotFound(err) {
+			Expect(err).ToNot(HaveOccurred())
+		}
+		initialConfigMap.SetResourceVersion("")
+		initialConfigMap.SetUID("")
+		initialConfigMap.SetCreationTimestamp(metav1.Time{})
+		initialConfigMap.SetSelfLink("")
+		initialConfigMap.SetGeneration(0)
+		initialConfigMap.SetManagedFields(nil)
+
+		// Save the initial secret
+		initialSecret = &corev1.Secret{}
+		err = env.Client.Get(env.Ctx, ctrlclient.ObjectKey{Namespace: operatorNamespace, Name: configName},
+			initialSecret)
+		if !apierrors.IsNotFound(err) {
+			Expect(err).ToNot(HaveOccurred())
+		}
+		initialSecret.SetResourceVersion("")
+		initialSecret.SetUID("")
+		initialSecret.SetCreationTimestamp(metav1.Time{})
+		initialSecret.SetSelfLink("")
+		initialSecret.SetGeneration(0)
+		initialSecret.SetManagedFields(nil)
 	})
 
 	AfterAll(func() {
@@ -76,7 +112,17 @@ var _ = Describe("Config support", Serial, Ordered, Label(tests.LabelDisruptive,
 		err = env.Client.Delete(env.Ctx, secret)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = operator.ReloadDeployment(env.Ctx, env.Client, env.Interface, 120)
+		// Create preexisting ConfigMap and Secret
+		if initialConfigMap.Name != "" {
+			err = env.Client.Create(env.Ctx, initialConfigMap)
+			Expect(err).ToNot(HaveOccurred())
+		}
+		if initialSecret.Name != "" {
+			err = env.Client.Create(env.Ctx, initialSecret)
+			Expect(err).ToNot(HaveOccurred())
+		}
+
+		err = operator.ReloadDeployment(env.Ctx, env.Client, 120)
 		Expect(err).ToNot(HaveOccurred())
 	})
 
@@ -110,7 +156,7 @@ var _ = Describe("Config support", Serial, Ordered, Label(tests.LabelDisruptive,
 		}, 10).Should(HaveLen(1))
 
 		// Reload the operator with the new config
-		err = operator.ReloadDeployment(env.Ctx, env.Client, env.Interface, 120)
+		err = operator.ReloadDeployment(env.Ctx, env.Client, 120)
 		Expect(err).ToNot(HaveOccurred())
 	})
 

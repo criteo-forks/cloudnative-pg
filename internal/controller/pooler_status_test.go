@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package controller
@@ -23,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs/pgbouncer"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -36,12 +39,12 @@ var _ = Describe("pooler_status unit tests", func() {
 		env = buildTestEnvironment()
 	})
 
-	assertClusterInheritedStatus := func(pooler *v1.Pooler, cluster *v1.Cluster) {
+	assertClusterInheritedStatus := func(pooler *apiv1.Pooler, cluster *apiv1.Cluster) {
 		Expect(pooler.Status.Secrets.ServerCA.Name).To(Equal(cluster.GetServerCASecretName()))
 		Expect(pooler.Status.Secrets.ServerTLS.Name).To(Equal(cluster.GetServerTLSSecretName()))
 		Expect(pooler.Status.Secrets.ClientCA.Name).To(Equal(cluster.GetClientCASecretName()))
 	}
-	assertAuthUserStatus := func(pooler *v1.Pooler, authUserSecret *corev1.Secret) {
+	assertAuthUserStatus := func(pooler *apiv1.Pooler, authUserSecret *corev1.Secret) {
 		Expect(pooler.Status.Secrets.PgBouncerSecrets.AuthQuery.Name).To(Equal(authUserSecret.Name))
 		Expect(pooler.Status.Secrets.PgBouncerSecrets.AuthQuery.Version).To(Equal(authUserSecret.ResourceVersion))
 	}
@@ -111,14 +114,14 @@ var _ = Describe("pooler_status unit tests", func() {
 		res := &poolerManagedResources{AuthUserSecret: authUserSecret, Cluster: cluster, Deployment: dep}
 
 		By("making sure it updates the remote stored status when there are changes", func() {
-			poolerBefore := &v1.Pooler{}
+			poolerBefore := &apiv1.Pooler{}
 			err := env.client.Get(ctx, poolerQuery, poolerBefore)
 			Expect(err).ToNot(HaveOccurred())
 
 			err = env.poolerReconciler.updatePoolerStatus(ctx, pooler, res)
 			Expect(err).ToNot(HaveOccurred())
 
-			poolerAfter := &v1.Pooler{}
+			poolerAfter := &apiv1.Pooler{}
 			err = env.client.Get(ctx, poolerQuery, poolerAfter)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -129,14 +132,14 @@ var _ = Describe("pooler_status unit tests", func() {
 		})
 
 		By("making sure it doesn't update the remote stored status when there aren't changes", func() {
-			poolerBefore := &v1.Pooler{}
+			poolerBefore := &apiv1.Pooler{}
 			err := env.client.Get(ctx, poolerQuery, poolerBefore)
 			Expect(err).ToNot(HaveOccurred())
 
 			err = env.poolerReconciler.updatePoolerStatus(ctx, pooler, res)
 			Expect(err).ToNot(HaveOccurred())
 
-			poolerAfter := &v1.Pooler{}
+			poolerAfter := &apiv1.Pooler{}
 			err = env.client.Get(ctx, poolerQuery, poolerAfter)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(poolerBefore.Status).To(BeEquivalentTo(poolerAfter.Status))

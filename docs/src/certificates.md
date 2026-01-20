@@ -1,4 +1,11 @@
+---
+id: certificates
+sidebar_position: 320
+title: Certificates
+---
+
 # Certificates
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 CloudNativePG was designed to natively support TLS certificates.
 To set up a cluster, the operator requires:
@@ -49,6 +56,11 @@ expiration (within a 90-day validity period).
     as a simple reload operation is sufficient. However, any user-managed
     certificates not controlled by CloudNativePG must be re-issued following the
     renewal process.
+
+When generating certificates, the operator assumes that the Kubernetes
+cluster's DNS zone is set to `cluster.local` by default. This behavior can be
+customized by setting the `KUBERNETES_CLUSTER_DOMAIN` environment variable. A
+convenient alternative is to use the [operator's configuration capability](operator_conf.md).
 
 ### Server certificates
 

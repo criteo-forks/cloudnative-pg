@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1
@@ -26,7 +29,7 @@ import (
 	"github.com/cloudnative-pg/barman-cloud/pkg/api"
 	"github.com/cloudnative-pg/machinery/pkg/image/reference"
 	pgversion "github.com/cloudnative-pg/machinery/pkg/postgres/version"
-	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1027,6 +1030,23 @@ var _ = Describe("configuration change validation", func() {
 		Expect(v.validateConfiguration(cluster)).To(HaveLen(1))
 	})
 
+	It("rejects PostgreSQL version lower than 13", func() {
+		v := &ClusterCustomValidator{}
+
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				ImageName: "postgres:12",
+			},
+		}
+
+		result := v.validateConfiguration(cluster)
+
+		Expect(result).To(HaveLen(1))
+		Expect(result[0].Field).To(Equal("spec.imageName"))
+		Expect(result[0].Detail).To(ContainSubstring("Unsupported PostgreSQL version"))
+		Expect(result[0].Detail).To(ContainSubstring("Versions 13 or newer are supported"))
+	})
+
 	It("should disallow changing wal_level to minimal for existing clusters", func() {
 		oldCluster := &apiv1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1204,8 +1224,17 @@ var _ = Describe("validate image name change", func() {
 
 	Context("using image name", func() {
 		It("doesn't complain with no changes", func() {
+			defaultVersion, err := pgversion.FromTag(reference.New(versions.DefaultImageName).Tag)
+			Expect(err).ToNot(HaveOccurred())
 			clusterOld := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{},
+				Status: apiv1.ClusterStatus{
+					Image: versions.DefaultImageName,
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        versions.DefaultImageName,
+						MajorVersion: int(defaultVersion.Major()),
+					},
+				},
 			}
 			clusterNew := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{},
@@ -1217,6 +1246,13 @@ var _ = Describe("validate image name change", func() {
 			clusterOld := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{
 					ImageName: "postgres:17.0",
+				},
+				Status: apiv1.ClusterStatus{
+					Image: "test",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "postgres:17.0",
+						MajorVersion: 17,
+					},
 				},
 			}
 			clusterNew := &apiv1.Cluster{
@@ -1232,6 +1268,13 @@ var _ = Describe("validate image name change", func() {
 				Spec: apiv1.ClusterSpec{
 					ImageName: "postgres:17.1",
 				},
+				Status: apiv1.ClusterStatus{
+					Image: "test",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "postgres:17.1",
+						MajorVersion: 17,
+					},
+				},
 			}
 			clusterNew := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{
@@ -1242,7 +1285,7 @@ var _ = Describe("validate image name change", func() {
 		})
 	})
 	Context("using image catalog", func() {
-		It("complains on major upgrades", func() {
+		It("complains on major downgrades", func() {
 			clusterOld := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{
 					ImageCatalogRef: &apiv1.ImageCatalogRef{
@@ -1250,7 +1293,14 @@ var _ = Describe("validate image name change", func() {
 							Name: "test",
 							Kind: "ImageCatalog",
 						},
-						Major: 15,
+						Major: 16,
+					},
+				},
+				Status: apiv1.ClusterStatus{
+					Image: "test",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "test",
+						MajorVersion: 16,
 					},
 				},
 			}
@@ -1261,7 +1311,7 @@ var _ = Describe("validate image name change", func() {
 							Name: "test",
 							Kind: "ImageCatalog",
 						},
-						Major: 16,
+						Major: 15,
 					},
 				},
 			}
@@ -1274,6 +1324,13 @@ var _ = Describe("validate image name change", func() {
 				Spec: apiv1.ClusterSpec{
 					ImageName: "postgres:16.1",
 				},
+				Status: apiv1.ClusterStatus{
+					Image: "test",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "postgres:16.1",
+						MajorVersion: 16,
+					},
+				},
 			}
 			clusterNew := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{
@@ -1288,10 +1345,17 @@ var _ = Describe("validate image name change", func() {
 			}
 			Expect(v.validateImageChange(clusterNew, clusterOld)).To(BeEmpty())
 		})
-		It("complains on major upgrades", func() {
+		It("complains on major downgrades", func() {
 			clusterOld := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{
-					ImageName: "postgres:16.1",
+					ImageName: "postgres:17.1",
+				},
+				Status: apiv1.ClusterStatus{
+					Image: "postgres:17.1",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "postgres:17.1",
+						MajorVersion: 17,
+					},
 				},
 			}
 			clusterNew := &apiv1.Cluster{
@@ -1301,15 +1365,24 @@ var _ = Describe("validate image name change", func() {
 							Name: "test",
 							Kind: "ImageCatalog",
 						},
-						Major: 17,
+						Major: 16,
 					},
 				},
 			}
 			Expect(v.validateImageChange(clusterNew, clusterOld)).To(HaveLen(1))
 		})
 		It("complains going from default imageName to different major imageCatalogRef", func() {
+			defaultVersion, err := pgversion.FromTag(reference.New(versions.DefaultImageName).Tag)
+			Expect(err).ToNot(HaveOccurred())
 			clusterOld := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{},
+				Status: apiv1.ClusterStatus{
+					Image: versions.DefaultImageName,
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        versions.DefaultImageName,
+						MajorVersion: int(defaultVersion.Major()),
+					},
+				},
 			}
 			clusterNew := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{
@@ -1358,23 +1431,11 @@ var _ = Describe("validate image name change", func() {
 						Major: 17,
 					},
 				},
-			}
-			clusterNew := &apiv1.Cluster{
-				Spec: apiv1.ClusterSpec{
-					ImageName: "postgres:17.1",
-				},
-			}
-			Expect(v.validateImageChange(clusterNew, clusterOld)).To(BeEmpty())
-		})
-		It("complains on major upgrades", func() {
-			clusterOld := &apiv1.Cluster{
-				Spec: apiv1.ClusterSpec{
-					ImageCatalogRef: &apiv1.ImageCatalogRef{
-						TypedLocalObjectReference: corev1.TypedLocalObjectReference{
-							Name: "test",
-							Kind: "ImageCatalog",
-						},
-						Major: 16,
+				Status: apiv1.ClusterStatus{
+					Image: "test",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "test",
+						MajorVersion: 17,
 					},
 				},
 			}
@@ -1383,9 +1444,9 @@ var _ = Describe("validate image name change", func() {
 					ImageName: "postgres:17.1",
 				},
 			}
-			Expect(v.validateImageChange(clusterNew, clusterOld)).To(HaveLen(1))
+			Expect(v.validateImageChange(clusterNew, clusterOld)).To(BeEmpty())
 		})
-		It("complains going from imageCatalogRef to different major default imageName", func() {
+		It("complains on major downgrades", func() {
 			clusterOld := &apiv1.Cluster{
 				Spec: apiv1.ClusterSpec{
 					ImageCatalogRef: &apiv1.ImageCatalogRef{
@@ -1393,7 +1454,44 @@ var _ = Describe("validate image name change", func() {
 							Name: "test",
 							Kind: "ImageCatalog",
 						},
-						Major: 16,
+						Major: 17,
+					},
+				},
+				Status: apiv1.ClusterStatus{
+					Image: "test",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "test",
+						MajorVersion: 17,
+					},
+				},
+			}
+			clusterNew := &apiv1.Cluster{
+				Spec: apiv1.ClusterSpec{
+					ImageName: "postgres:16.1",
+				},
+			}
+			Expect(v.validateImageChange(clusterNew, clusterOld)).To(HaveLen(1))
+		})
+		It("complains going from imageCatalogRef to lower major default imageName", func() {
+			defaultVersion, err := pgversion.FromTag(reference.New(versions.DefaultImageName).Tag)
+			Expect(err).ToNot(HaveOccurred())
+			higherVersion := int(defaultVersion.Major()) + 1
+
+			clusterOld := &apiv1.Cluster{
+				Spec: apiv1.ClusterSpec{
+					ImageCatalogRef: &apiv1.ImageCatalogRef{
+						TypedLocalObjectReference: corev1.TypedLocalObjectReference{
+							Name: "test",
+							Kind: "ImageCatalog",
+						},
+						Major: higherVersion,
+					},
+				},
+				Status: apiv1.ClusterStatus{
+					Image: "test",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "test",
+						MajorVersion: higherVersion,
 					},
 				},
 			}
@@ -1415,6 +1513,13 @@ var _ = Describe("validate image name change", func() {
 							Kind: "ImageCatalog",
 						},
 						Major: int(version.Major()),
+					},
+				},
+				Status: apiv1.ClusterStatus{
+					Image: "test",
+					PGDataImageInfo: &apiv1.ImageInfo{
+						Image:        "test",
+						MajorVersion: int(version.Major()),
 					},
 				},
 			}
@@ -4022,12 +4127,12 @@ var _ = Describe("Recovery from volume snapshot validation", func() {
 					Recovery: &apiv1.BootstrapRecovery{
 						VolumeSnapshots: &apiv1.DataSource{
 							Storage: corev1.TypedLocalObjectReference{
-								APIGroup: ptr.To(storagesnapshotv1.GroupName),
+								APIGroup: ptr.To(volumesnapshotv1.GroupName),
 								Kind:     "VolumeSnapshot",
 								Name:     "pgdata",
 							},
 							WalStorage: &corev1.TypedLocalObjectReference{
-								APIGroup: ptr.To(storagesnapshotv1.GroupName),
+								APIGroup: ptr.To(volumesnapshotv1.GroupName),
 								Kind:     "VolumeSnapshot",
 								Name:     "pgwal",
 							},
@@ -4046,12 +4151,12 @@ var _ = Describe("Recovery from volume snapshot validation", func() {
 					Recovery: &apiv1.BootstrapRecovery{
 						VolumeSnapshots: &apiv1.DataSource{
 							Storage: corev1.TypedLocalObjectReference{
-								APIGroup: ptr.To(storagesnapshotv1.GroupName),
+								APIGroup: ptr.To(volumesnapshotv1.GroupName),
 								Kind:     "VolumeSnapshot",
 								Name:     "pgdata",
 							},
 							WalStorage: &corev1.TypedLocalObjectReference{
-								APIGroup: ptr.To(storagesnapshotv1.GroupName),
+								APIGroup: ptr.To(volumesnapshotv1.GroupName),
 								Kind:     "VolumeSnapshot",
 								Name:     "pgwal",
 							},
@@ -4068,12 +4173,12 @@ var _ = Describe("Recovery from volume snapshot validation", func() {
 		cluster := clusterFromRecovery(&apiv1.BootstrapRecovery{
 			VolumeSnapshots: &apiv1.DataSource{
 				Storage: corev1.TypedLocalObjectReference{
-					APIGroup: ptr.To(storagesnapshotv1.GroupName),
+					APIGroup: ptr.To(volumesnapshotv1.GroupName),
 					Kind:     apiv1.VolumeSnapshotKind,
 					Name:     "pgdata",
 				},
 				WalStorage: &corev1.TypedLocalObjectReference{
-					APIGroup: ptr.To(storagesnapshotv1.GroupName),
+					APIGroup: ptr.To(volumesnapshotv1.GroupName),
 					Kind:     apiv1.VolumeSnapshotKind,
 					Name:     "pgwal",
 				},
@@ -4086,7 +4191,7 @@ var _ = Describe("Recovery from volume snapshot validation", func() {
 		cluster := clusterFromRecovery(&apiv1.BootstrapRecovery{
 			VolumeSnapshots: &apiv1.DataSource{
 				Storage: corev1.TypedLocalObjectReference{
-					APIGroup: ptr.To(storagesnapshotv1.GroupName),
+					APIGroup: ptr.To(volumesnapshotv1.GroupName),
 					Kind:     apiv1.VolumeSnapshotKind,
 					Name:     "pgdata",
 				},
@@ -4102,12 +4207,12 @@ var _ = Describe("Recovery from volume snapshot validation", func() {
 			cluster := clusterFromRecovery(&apiv1.BootstrapRecovery{
 				VolumeSnapshots: &apiv1.DataSource{
 					Storage: corev1.TypedLocalObjectReference{
-						APIGroup: ptr.To(storagesnapshotv1.GroupName),
+						APIGroup: ptr.To(volumesnapshotv1.GroupName),
 						Kind:     "VolumeSnapshot",
 						Name:     "pgdata",
 					},
 					WalStorage: &corev1.TypedLocalObjectReference{
-						APIGroup: ptr.To(storagesnapshotv1.GroupName),
+						APIGroup: ptr.To(volumesnapshotv1.GroupName),
 						Kind:     "VolumeSnapshot",
 						Name:     "pgwal",
 					},
@@ -4122,12 +4227,12 @@ var _ = Describe("Recovery from volume snapshot validation", func() {
 			cluster := clusterFromRecovery(&apiv1.BootstrapRecovery{
 				VolumeSnapshots: &apiv1.DataSource{
 					Storage: corev1.TypedLocalObjectReference{
-						APIGroup: ptr.To(storagesnapshotv1.GroupName),
+						APIGroup: ptr.To(volumesnapshotv1.GroupName),
 						Kind:     "VolumeSnapshot",
 						Name:     "pgdata",
 					},
 					WalStorage: &corev1.TypedLocalObjectReference{
-						APIGroup: ptr.To(storagesnapshotv1.GroupName),
+						APIGroup: ptr.To(volumesnapshotv1.GroupName),
 						Kind:     "VolumeSnapshot",
 						Name:     "pgwal",
 					},
@@ -4287,8 +4392,56 @@ var _ = Describe("validateResources", func() {
 		Expect(errors[0].Detail).To(Equal("Memory request is lower than PostgreSQL `shared_buffers` value"))
 	})
 
+	It("returns no errors when no memoryRequest is set", func() {
+		cluster.Spec.PostgresConfiguration.Parameters["shared_buffers"] = "1GB"
+		errors := v.validateResources(cluster)
+		Expect(errors).To(BeEmpty())
+	})
+
 	It("returns no errors when memoryRequest is greater than or equal to shared_buffers in GB", func() {
 		cluster.Spec.Resources.Requests["memory"] = resource.MustParse("2Gi")
+		cluster.Spec.PostgresConfiguration.Parameters["shared_buffers"] = "1GB"
+		errors := v.validateResources(cluster)
+		Expect(errors).To(BeEmpty())
+	})
+
+	It("returns an error when hugepages request is different than hugepages limits", func() {
+		cluster.Spec.Resources.Requests["memory"] = resource.MustParse("2Gi")
+		cluster.Spec.Resources.Requests["hugepages-1Gi"] = resource.MustParse("1Gi")
+		cluster.Spec.Resources.Limits["hugepages-1Gi"] = resource.MustParse("2Gi")
+		errors := v.validateResources(cluster)
+		Expect(errors).To(HaveLen(1))
+		Expect(errors[0].Detail).To(Equal("HugePages requests must equal the limits"))
+	})
+
+	It("returns an error when hugepages request is present but no CPU or memory are", func() {
+		cluster.Spec.Resources.Requests["hugepages-1Gi"] = resource.MustParse("1Gi")
+		errors := v.validateResources(cluster)
+		Expect(errors).To(HaveLen(1))
+		Expect(errors[0].Detail).To(Equal("HugePages require cpu or memory"))
+	})
+
+	It("returns an error when no request is enough to contain shared_buffers, even if the sum is", func() {
+		cluster.Spec.Resources.Requests["memory"] = resource.MustParse("1Gi")
+		cluster.Spec.Resources.Requests["ugepages-1Gi"] = resource.MustParse("1Gi")
+		cluster.Spec.Resources.Requests["hugepages-2Mi"] = resource.MustParse("1Gi")
+		cluster.Spec.PostgresConfiguration.Parameters["shared_buffers"] = "2000000kB"
+		errors := v.validateResources(cluster)
+		Expect(errors).To(HaveLen(1))
+		Expect(errors[0].Detail).To(Equal("Memory request is lower than PostgreSQL `shared_buffers` value"))
+	})
+
+	It("returns no errors when hugepages-1Gi request is greater than or equal to shared_buffers in GB", func() {
+		cluster.Spec.Resources.Requests["memory"] = resource.MustParse("256Mi")
+		cluster.Spec.Resources.Requests["hugepages-1Gi"] = resource.MustParse("1Gi")
+		cluster.Spec.PostgresConfiguration.Parameters["shared_buffers"] = "1GB"
+		errors := v.validateResources(cluster)
+		Expect(errors).To(BeEmpty())
+	})
+
+	It("returns no errors when hugepages-2Mi request is greater than or equal to shared_buffers in GB", func() {
+		cluster.Spec.Resources.Requests["memory"] = resource.MustParse("256Mi")
+		cluster.Spec.Resources.Limits["hugepages-2Mi"] = resource.MustParse("1Gi")
 		cluster.Spec.PostgresConfiguration.Parameters["shared_buffers"] = "1GB"
 		errors := v.validateResources(cluster)
 		Expect(errors).To(BeEmpty())
@@ -4299,6 +4452,75 @@ var _ = Describe("validateResources", func() {
 		cluster.Spec.PostgresConfiguration.Parameters["shared_buffers"] = "invalid_value"
 		errors := v.validateResources(cluster)
 		Expect(errors).To(BeEmpty())
+	})
+
+	// InitContainerResources validation tests
+	It("returns no errors when InitContainerResources is not set", func() {
+		cluster.Spec.InitContainerResources = nil
+		errors := v.validateResources(cluster)
+		Expect(errors).To(BeEmpty())
+	})
+
+	It("returns no errors when InitContainerResources requests are less than limits", func() {
+		cluster.Spec.InitContainerResources = &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+		}
+		errors := v.validateResources(cluster)
+		Expect(errors).To(BeEmpty())
+	})
+
+	It("returns an error when InitContainerResources CPU request is greater than limit", func() {
+		cluster.Spec.InitContainerResources = &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU: resource.MustParse("200m"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU: resource.MustParse("100m"),
+			},
+		}
+		errors := v.validateResources(cluster)
+		Expect(errors).To(HaveLen(1))
+		Expect(errors[0].Field).To(Equal("spec.initContainerResources.requests.cpu"))
+		Expect(errors[0].Detail).To(Equal("CPU request is greater than the limit"))
+	})
+
+	It("returns an error when InitContainerResources memory request is greater than limit", func() {
+		cluster.Spec.InitContainerResources = &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("512Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+		}
+		errors := v.validateResources(cluster)
+		Expect(errors).To(HaveLen(1))
+		Expect(errors[0].Field).To(Equal("spec.initContainerResources.requests.memory"))
+		Expect(errors[0].Detail).To(Equal("Memory request is greater than the limit"))
+	})
+
+	It("returns two errors when both InitContainerResources CPU and memory requests are greater than limits", func() {
+		cluster.Spec.InitContainerResources = &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+				corev1.ResourceMemory: resource.MustParse("512Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+		}
+		errors := v.validateResources(cluster)
+		Expect(errors).To(HaveLen(2))
+		Expect(errors[0].Detail).To(Equal("CPU request is greater than the limit"))
+		Expect(errors[1].Detail).To(Equal("Memory request is greater than the limit"))
 	})
 })
 
@@ -4986,5 +5208,319 @@ var _ = Describe("validatePluginConfiguration", func() {
 	It("returns no errors when WAL archiver is enabled", func() {
 		cluster.Spec.Plugins = append(cluster.Spec.Plugins, walPlugin1)
 		Expect(v.validatePluginConfiguration(cluster)).To(BeNil())
+	})
+})
+
+var _ = Describe("", func() {
+	var v *ClusterCustomValidator
+	BeforeEach(func() {
+		v = &ClusterCustomValidator{}
+	})
+
+	It("returns no errors if the liveness pinger annotation is not present", func() {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{},
+			},
+		}
+		Expect(v.validateLivenessPingerProbe(cluster)).To(BeNil())
+	})
+
+	It("returns no errors if the liveness pinger annotation is valid", func() {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					utils.LivenessPingerAnnotationName: `{"connectionTimeout": 1000, "requestTimeout": 5000, "enabled": true}`,
+				},
+			},
+		}
+		Expect(v.validateLivenessPingerProbe(cluster)).To(BeNil())
+	})
+
+	It("returns an error if the liveness pinger annotation is invalid", func() {
+		cluster := &apiv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					utils.LivenessPingerAnnotationName: `{"requestTimeout": 5000}`,
+				},
+			},
+		}
+		errs := v.validateLivenessPingerProbe(cluster)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("error decoding liveness pinger config"))
+	})
+})
+
+var _ = Describe("getInTreeBarmanWarnings", func() {
+	It("returns no warnings when BarmanObjectStore is not configured", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				Backup:           nil,
+				ExternalClusters: nil,
+			},
+		}
+		Expect(getInTreeBarmanWarnings(cluster)).To(BeEmpty())
+	})
+
+	It("returns a warning when BarmanObjectStore is configured in backup", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				Backup: &apiv1.BackupConfiguration{
+					BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
+				},
+			},
+		}
+		warnings := getInTreeBarmanWarnings(cluster)
+		Expect(warnings).To(HaveLen(1))
+		Expect(warnings[0]).To(ContainSubstring("spec.backup.barmanObjectStore"))
+	})
+
+	It("returns warnings for multiple external clusters with BarmanObjectStore", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				ExternalClusters: []apiv1.ExternalCluster{
+					{BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{}},
+					{BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{}},
+				},
+			},
+		}
+		warnings := getInTreeBarmanWarnings(cluster)
+		Expect(warnings).To(HaveLen(1))
+		Expect(warnings[0]).To(ContainSubstring("spec.externalClusters.0.barmanObjectStore"))
+		Expect(warnings[0]).To(ContainSubstring("spec.externalClusters.1.barmanObjectStore"))
+	})
+
+	It("returns warnings for both backup and external clusters with BarmanObjectStore", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				Backup: &apiv1.BackupConfiguration{
+					BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
+				},
+				ExternalClusters: []apiv1.ExternalCluster{
+					{BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{}},
+				},
+			},
+		}
+		warnings := getInTreeBarmanWarnings(cluster)
+		Expect(warnings).To(HaveLen(1))
+		Expect(warnings[0]).To(ContainSubstring("spec.backup.barmanObjectStore"))
+		Expect(warnings[0]).To(ContainSubstring("spec.externalClusters.0.barmanObjectStore"))
+	})
+})
+
+var _ = Describe("getRetentionPolicyWarnings", func() {
+	It("returns no warnings if the retention policy is used with the in-tree backup support", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				Backup: &apiv1.BackupConfiguration{
+					RetentionPolicy:   "this retention policy",
+					BarmanObjectStore: &apiv1.BarmanObjectStoreConfiguration{},
+				},
+			},
+		}
+
+		warnings := getRetentionPolicyWarnings(cluster)
+		Expect(warnings).To(BeEmpty())
+	})
+
+	It("return a warning when retention policies are declared and not used", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				Backup: &apiv1.BackupConfiguration{
+					RetentionPolicy: "this retention policy",
+				},
+			},
+		}
+
+		warnings := getRetentionPolicyWarnings(cluster)
+		Expect(warnings).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("getStorageWarnings", func() {
+	It("returns no warnings when storage is properly configured", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size: "1Gi",
+				},
+			},
+		}
+		Expect(getStorageWarnings(cluster)).To(BeEmpty())
+	})
+
+	It("returns no warnings when PVC template has storage configured", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse("1Gi"),
+							},
+						},
+					},
+				},
+			},
+		}
+		Expect(getStorageWarnings(cluster)).To(BeEmpty())
+	})
+
+	It("returns a warning when both storageClass and storageClassName are specified", func() {
+		storageClass := "fast-ssd"
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					StorageClass: &storageClass,
+					PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+						StorageClassName: &storageClass,
+					},
+				},
+			},
+		}
+		warnings := getStorageWarnings(cluster)
+		Expect(warnings).To(HaveLen(1))
+		Expect(warnings[0]).To(ContainSubstring("spec.storage.storageClass"))
+		Expect(warnings[0]).To(ContainSubstring("spec.storage.pvcTemplate.storageClassName"))
+		Expect(warnings[0]).To(ContainSubstring("spec.storage.storageClass value will be used"))
+	})
+
+	It("returns a warning when both size and storage requests are specified", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size: "1Gi",
+					PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse("2Gi"),
+							},
+						},
+					},
+				},
+			},
+		}
+		warnings := getStorageWarnings(cluster)
+		Expect(warnings).To(HaveLen(1))
+		Expect(warnings[0]).To(ContainSubstring("spec.storage.size"))
+		Expect(warnings[0]).To(ContainSubstring("spec.storage.pvcTemplate.resources.requests.storage"))
+		Expect(warnings[0]).To(ContainSubstring("spec.storage.size value will be used"))
+	})
+
+	It("returns multiple warnings when both storage conflicts exist", func() {
+		storageClass := "fast-ssd"
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size:         "1Gi",
+					StorageClass: &storageClass,
+					PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+						StorageClassName: &storageClass,
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse("2Gi"),
+							},
+						},
+					},
+				},
+			},
+		}
+		warnings := getStorageWarnings(cluster)
+		Expect(warnings).To(HaveLen(2))
+		Expect(warnings[0]).To(ContainSubstring("storageClass"))
+		Expect(warnings[1]).To(ContainSubstring("size"))
+	})
+
+	It("returns warnings for WAL storage configuration conflicts", func() {
+		storageClass := "fast-ssd"
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				WalStorage: &apiv1.StorageConfiguration{
+					Size:         "500Mi",
+					StorageClass: &storageClass,
+					PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+						StorageClassName: &storageClass,
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse("1Gi"),
+							},
+						},
+					},
+				},
+			},
+		}
+		warnings := getStorageWarnings(cluster)
+		Expect(warnings).To(HaveLen(2))
+		Expect(warnings[0]).To(ContainSubstring("spec.walStorage.storageClass"))
+		Expect(warnings[1]).To(ContainSubstring("spec.walStorage.size"))
+	})
+
+	It("returns warnings for both storage and WAL storage conflicts", func() {
+		storageClass := "fast-ssd"
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size:         "1Gi",
+					StorageClass: &storageClass,
+					PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+						StorageClassName: &storageClass,
+					},
+				},
+				WalStorage: &apiv1.StorageConfiguration{
+					Size: "500Mi",
+					PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse("1Gi"),
+							},
+						},
+					},
+				},
+			},
+		}
+		warnings := getStorageWarnings(cluster)
+		Expect(warnings).To(HaveLen(2))
+		Expect(warnings[0]).To(ContainSubstring("spec.storage"))
+		Expect(warnings[1]).To(ContainSubstring("spec.walStorage"))
+	})
+
+	It("returns no warnings when WAL storage is nil", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size: "1Gi",
+				},
+				WalStorage: nil,
+			},
+		}
+		Expect(getStorageWarnings(cluster)).To(BeEmpty())
+	})
+
+	It("returns no warnings when PVC template is nil", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size:                          "1Gi",
+					PersistentVolumeClaimTemplate: nil,
+				},
+			},
+		}
+		Expect(getStorageWarnings(cluster)).To(BeEmpty())
+	})
+
+	It("returns no warnings when storage requests are zero", func() {
+		cluster := &apiv1.Cluster{
+			Spec: apiv1.ClusterSpec{
+				StorageConfiguration: apiv1.StorageConfiguration{
+					Size: "1Gi",
+					PersistentVolumeClaimTemplate: &corev1.PersistentVolumeClaimSpec{
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{},
+						},
+					},
+				},
+			},
+		}
+		Expect(getStorageWarnings(cluster)).To(BeEmpty())
 	})
 })

@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package specs
@@ -23,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
@@ -37,7 +41,28 @@ func CreateSecret(
 	password string,
 	usertype utils.UserType,
 ) *corev1.Secret {
-	uriBuilder := newConnectionStringBuilder(hostname, dbname, username, password, namespace)
+	hostWithNamespace := fmt.Sprintf("%s.%s:%d", hostname, namespace, postgres.ServerPort)
+	hostWithFQDN := fmt.Sprintf(
+		"%s.%s.svc.%s:%d",
+		hostname,
+		namespace,
+		configuration.Current.KubernetesClusterDomain,
+		postgres.ServerPort,
+	)
+
+	namespacedBuilder := &connectionStringBuilder{
+		host:     hostWithNamespace,
+		dbname:   dbname,
+		username: username,
+		password: password,
+	}
+
+	fqdnBuilder := &connectionStringBuilder{
+		host:     hostWithFQDN,
+		dbname:   dbname,
+		username: username,
+		password: password,
+	}
 
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -63,28 +88,19 @@ func CreateSecret(
 				dbname,
 				username,
 				password),
-			"uri":      uriBuilder.buildPostgres(),
-			"jdbc-uri": uriBuilder.buildJdbc(),
+			"uri":           namespacedBuilder.buildPostgres(),
+			"jdbc-uri":      namespacedBuilder.buildJdbc(),
+			"fqdn-uri":      fqdnBuilder.buildPostgres(),
+			"fqdn-jdbc-uri": fqdnBuilder.buildJdbc(),
 		},
 	}
 }
 
 type connectionStringBuilder struct {
-	host      string
-	dbname    string
-	username  string
-	password  string
-	namespace string
-}
-
-func newConnectionStringBuilder(hostname, dbname, username, password, namespace string) *connectionStringBuilder {
-	return &connectionStringBuilder{
-		host:      fmt.Sprintf("%s.%s:%d", hostname, namespace, postgres.ServerPort),
-		dbname:    dbname,
-		username:  username,
-		password:  password,
-		namespace: namespace,
-	}
+	host     string
+	dbname   string
+	username string
+	password string
 }
 
 func (c connectionStringBuilder) buildPostgres() string {

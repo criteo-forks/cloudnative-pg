@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package replicaclusterswitch
@@ -67,7 +70,7 @@ func generateDemotionToken(
 		return "", fmt.Errorf("could not get pg_controldata from Pod %s: %w", primaryInstance.Pod.Name, err)
 	}
 	parsed := utils.ParsePgControldataOutput(rawPgControlData)
-	pgDataState := parsed[utils.PgControlDataDatabaseClusterStateKey]
+	pgDataState := parsed.GetDatabaseClusterState()
 
 	if !utils.PgDataState(pgDataState).IsShutdown(ctx) {
 		// PostgreSQL is still not shut down, waiting
@@ -75,7 +78,7 @@ func generateDemotionToken(
 		return "", errPostgresNotShutDown
 	}
 
-	token, err := utils.CreatePromotionToken(parsed)
+	token, err := parsed.CreatePromotionToken()
 	if err != nil {
 		return "", err
 	}
@@ -89,9 +92,9 @@ func generateDemotionToken(
 		return "", fmt.Errorf("could not archive shutdown checkpoint wal file: %w", err)
 	}
 
-	if parsed[utils.PgControlDataKeyREDOWALFile] != partialArchiveWALName {
+	if parsed.GetREDOWALFile() != partialArchiveWALName {
 		return "", fmt.Errorf("unexpected shutdown checkpoint wal file archived, expected: %s, got: %s",
-			parsed[utils.PgControlDataKeyREDOWALFile],
+			parsed.GetREDOWALFile(),
 			partialArchiveWALName,
 		)
 	}

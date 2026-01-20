@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1
@@ -19,7 +22,7 @@ package v1
 import (
 	"time"
 
-	volumesnapshot "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -56,7 +59,7 @@ var _ = Describe("BackupStatus structure", func() {
 
 	It("can be set to contain a snapshot list", func() {
 		status := BackupStatus{}
-		status.BackupSnapshotStatus.SetSnapshotElements([]volumesnapshot.VolumeSnapshot{
+		status.BackupSnapshotStatus.SetSnapshotElements([]volumesnapshotv1.VolumeSnapshot{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster-example-snapshot-1",

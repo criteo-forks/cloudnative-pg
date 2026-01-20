@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package minio contains all the require functions to setup a MinIO deployment and
@@ -46,8 +49,10 @@ import (
 )
 
 const (
-	minioImage       = "minio/minio:RELEASE.2022-06-20T23-13-45Z"
-	minioClientImage = "minio/mc:RELEASE.2022-06-11T21-10-36Z"
+	// minioImage is the image used to run a MinIO server
+	minioImage = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
+	// minioClientImage is the image used to run a MinIO client
+	minioClientImage = "minio/mc:RELEASE.2025-08-13T08-35-41Z"
 )
 
 // Env contains all the information related or required by MinIO deployment and
@@ -514,7 +519,7 @@ func (m *Env) getCaSecret(env *environment.TestingEnvironment, namespace string)
 	}, nil
 }
 
-// CreateCaSecret creates the certificates required to authenticate against the the MinIO service
+// CreateCaSecret creates the certificates required to authenticate against the MinIO service
 func (m *Env) CreateCaSecret(env *environment.TestingEnvironment, namespace string) error {
 	caSecret, err := m.getCaSecret(env, namespace)
 	if err != nil {
@@ -524,7 +529,7 @@ func (m *Env) CreateCaSecret(env *environment.TestingEnvironment, namespace stri
 	return err
 }
 
-// CountFiles uses the minioClient in the given `namespace` to count  the
+// CountFiles uses the minioClient in the given `namespace` to count the
 // amount of files matching the given `path`
 func CountFiles(minioEnv *Env, path string) (value int, err error) {
 	var stdout string
@@ -601,28 +606,32 @@ func GetFileTags(minioEnv *Env, path string) (TagSet, error) {
 	return output, nil
 }
 
-// TestConnectivityUsingBarmanCloudWalArchive returns true if test connection is successful else false
-func TestConnectivityUsingBarmanCloudWalArchive(
+// TestBarmanConnectivity validates the barman connectivity to the minio endpoint
+func TestBarmanConnectivity(
 	namespace,
 	clusterName,
-	podName,
-	id,
-	key string,
+	primaryPodName,
+	minioID,
+	minioKey string,
 	minioSvcName string,
 ) (bool, error) {
-	// test connectivity should work with valid sample "000000010000000000000000" wal file
-	// using barman-cloud-wal-archive script
-	cmd := fmt.Sprintf("export AWS_CA_BUNDLE=%s;export AWS_ACCESS_KEY_ID=%s;export AWS_SECRET_ACCESS_KEY=%s;"+
-		"barman-cloud-wal-archive --cloud-provider aws-s3 --endpoint-url https://%s:9000 s3://cluster-backups/ %s "+
-		"000000010000000000000000 --test", postgres.BarmanBackupEndpointCACertificateLocation, id, key,
-		minioSvcName, clusterName)
-	_, _, err := run.Unchecked(fmt.Sprintf(
-		"kubectl exec -n %v %v -c postgres -- /bin/bash -c \"%v\"",
+	env := fmt.Sprintf("export AWS_CA_BUNDLE=%s;export AWS_ACCESS_KEY_ID=%s;export AWS_SECRET_ACCESS_KEY=%s;",
+		postgres.BarmanBackupEndpointCACertificateLocation, minioID, minioKey)
+
+	endpointURL := fmt.Sprintf("https://%s:9000", minioSvcName)
+	destinationPath := fmt.Sprintf("s3://%s/", "not-evaluated")
+	cmd := fmt.Sprintf("barman-cloud-check-wal-archive --cloud-provider aws-s3 --endpoint-url %s %s %s --test",
+		endpointURL, destinationPath, clusterName)
+
+	stdout, stderr, err := run.Unchecked(fmt.Sprintf(
+		"kubectl exec -n %v %v -c postgres -- /bin/bash -c \"%s %s\"",
 		namespace,
-		podName,
-		cmd))
+		primaryPodName,
+		env,
+		cmd,
+	))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("barman connectivity test failed: %w (stdout: %s, stderr: %s)", err, stdout, stderr)
 	}
 	return true, nil
 }

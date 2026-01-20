@@ -1,5 +1,6 @@
 /*
-Copyright The CloudNativePG Contributors
+Copyright © contributors to CloudNativePG, established as
+CloudNativePG a Series of LF Projects, LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +13,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package report implements the kubectl-cnpg report command
@@ -25,7 +28,7 @@ import (
 	"path/filepath"
 	"time"
 
-	v12 "k8s.io/api/admissionregistration/v1"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,8 +45,8 @@ type operatorReport struct {
 	configs                 []namedObject
 	events                  corev1.EventList
 	webhookService          corev1.Service
-	mutatingWebhookConfig   *v12.MutatingWebhookConfigurationList
-	validatingWebhookConfig *v12.ValidatingWebhookConfigurationList
+	mutatingWebhookConfig   *admissionregistrationv1.MutatingWebhookConfigurationList
+	validatingWebhookConfig *admissionregistrationv1.ValidatingWebhookConfigurationList
 }
 
 // writeToZip makes a new section in the ZIP file, and adds in it various
