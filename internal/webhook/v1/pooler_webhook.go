@@ -240,7 +240,61 @@ func (v *PoolerCustomValidator) validateCluster(r *apiv1.Pooler) field.ErrorList
 func (v *PoolerCustomValidator) validate(r *apiv1.Pooler) (allErrs field.ErrorList) {
 	allErrs = append(allErrs, v.validatePgBouncer(r)...)
 	allErrs = append(allErrs, v.validateCluster(r)...)
+	allErrs = append(allErrs, v.validateLDAP(r)...)
 	return allErrs
+}
+
+// validateLDAP checks LDAP configuration: mutual exclusivity with auth_query and required fields when enabled.
+func (v *PoolerCustomValidator) validateLDAP(r *apiv1.Pooler) field.ErrorList {
+	var result field.ErrorList
+	ldap := r.Spec.LDAP
+
+	if ldap == nil || !ldap.Enabled {
+		return result
+	}
+
+	// LDAP and auth_query are mutually exclusive
+	hasAuthQuery := r.Spec.PgBouncer != nil && (
+		r.Spec.PgBouncer.AuthQuery != "" ||
+			(r.Spec.PgBouncer.AuthQuerySecret != nil && r.Spec.PgBouncer.AuthQuerySecret.Name != ""))
+	if hasAuthQuery {
+		result = append(result,
+			field.Invalid(
+				field.NewPath("spec", "ldap"),
+				ldap.Enabled,
+				"LDAP authentication and auth_query are mutually exclusive: when spec.ldap.enabled is true, "+
+					"do not set spec.pgbouncer.authQuery or spec.pgbouncer.authQuerySecret"))
+		return result
+	}
+
+	// Required fields when LDAP is enabled
+	if ldap.Host == "" {
+		result = append(result,
+			field.Required(
+				field.NewPath("spec", "ldap", "host"),
+				"LDAP host is required when spec.ldap.enabled is true (e.g. ldap.example.com)"))
+	}
+	if ldap.BaseDN == "" {
+		result = append(result,
+			field.Required(
+				field.NewPath("spec", "ldap", "baseDN"),
+				"LDAP baseDN is required when spec.ldap.enabled is true (e.g. dc=example,dc=com)"))
+	}
+	if ldap.BindDN == "" {
+		result = append(result,
+			field.Required(
+				field.NewPath("spec", "ldap", "bindDN"),
+				"LDAP bindDN is required when spec.ldap.enabled is true (e.g. cn=admin,dc=example,dc=com)"))
+	}
+	if ldap.Credentials == nil || ldap.Credentials.SecretName == "" {
+		result = append(result,
+			field.Required(
+				field.NewPath("spec", "ldap", "credentials", "secretName"),
+				"LDAP credentials.secretName is required when spec.ldap.enabled is true: "+
+					"reference a Secret containing the bind password (key: password or bindPassword)"))
+	}
+
+	return result
 }
 
 // validatePgbouncerGenericParameters validates pgbouncer parameters

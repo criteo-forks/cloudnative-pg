@@ -194,10 +194,14 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 
 	parameters := buildPgBouncerParameters(pooler.Spec.PgBouncer.Parameters)
 
+	if err := applyLDAPParameters(pooler, parameters); err != nil {
+		return nil, fmt.Errorf("while applying LDAP parameters: %w", err)
+	}
+
 	if isCertAuth {
 		parameters["server_tls_cert_file"] = authUserCrtPath
 		parameters["server_tls_key_file"] = authUserKeyPath
-	} else {
+	} else if !isLDAPEnabled(pooler) {
 		parameters["auth_file"] = authFilePath
 	}
 
@@ -236,7 +240,8 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 	}
 	files[filepath.Join(ConfigsDir, PgBouncerIniFileName)] = pgbouncerIni.Bytes()
 
-	if !isCertAuth {
+	// userlist.txt is only used for client auth when not using LDAP
+	if !isCertAuth && !isLDAPEnabled(pooler) {
 		err := pgBouncerUserListTemplate.Execute(&pgbouncerUserList, templateData)
 		if err != nil {
 			return nil, fmt.Errorf("while executing %s template: %w", PgBouncerUserListFileName, err)

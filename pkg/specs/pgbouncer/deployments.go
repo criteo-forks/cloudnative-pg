@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	config "github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
@@ -40,6 +41,9 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils/hash"
 )
 
+// ldapBindSecretVolumeName is the name of the volume for the LDAP bind password Secret.
+const ldapBindSecretVolumeName = "ldap-bind-secret"
+
 // Deployment create the deployment of pgbouncer, given
 // the configurations we have in the pooler specifications
 func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deployment, error) {
@@ -50,7 +54,7 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 		return nil, err
 	}
 
-	podTemplate := podspec.NewFrom(pooler.Spec.Template).
+	builder := podspec.NewFrom(pooler.Spec.Template).
 		WithLabel(utils.PgbouncerNameLabel, pooler.Name).
 		WithLabel(utils.ClusterLabelName, cluster.Name).
 		WithLabel(utils.PodRoleLabelName, string(utils.PodRolePooler)).
@@ -73,7 +77,10 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 					SecretName: cluster.GetServerTLSSecretName(),
 				},
 			},
-		}).
+		})
+	builder = addLDAPVolumeIfEnabled(builder, pooler)
+
+	podTemplate := builder.
 		WithSecurityContext(createPodSecurityContext(cluster.GetSeccompProfile(), 998, 996), true).
 		WithContainerImage("pgbouncer", config.Current.PgbouncerImageName, false).
 		WithContainerCommand("pgbouncer", []string{
@@ -93,7 +100,7 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 		WithInitContainerCommand(specs.BootstrapControllerContainerName,
 			[]string{"/manager", "bootstrap", "/controller/manager"},
 			true).
-		WithInitContainerResources(specs.BootstrapControllerContainerName, pooler.GetResourcesRequirements(), false).
+		WithInitContainerResources(specs.BootstrapControllerContainerName, pooler.GetResourcesRequirements(), true).
 		WithInitContainerSecurityContext(specs.BootstrapControllerContainerName,
 			specs.GetSecurityContext(cluster), true).
 		WithVolume(&corev1.Volume{
@@ -203,4 +210,34 @@ func createPodSecurityContext(seccompProfile *corev1.SeccompProfile, user, group
 		FSGroup:        &group,
 		SeccompProfile: seccompProfile,
 	}
+}
+
+// addLDAPVolumeIfEnabled adds the LDAP bind password Secret volume and mounts
+// when spec.ldap is enabled and credentials are set. The Secret is mounted
+// read-only (0400) at LDAPBindPasswordMountDir; key "password" → bind.password.
+func addLDAPVolumeIfEnabled(builder *podspec.Builder, pooler *apiv1.Pooler) *podspec.Builder {
+	if pooler.Spec.LDAP == nil || !pooler.Spec.LDAP.Enabled ||
+		pooler.Spec.LDAP.Credentials == nil || pooler.Spec.LDAP.Credentials.SecretName == "" {
+		return builder
+	}
+	secretName := pooler.Spec.LDAP.Credentials.SecretName
+	mode := int32(0o400)
+	return builder.
+		WithVolume(&corev1.Volume{
+			Name: ldapBindSecretVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  secretName,
+					DefaultMode: ptr.To(mode),
+					Items: []corev1.KeyToPath{
+						{Key: "password", Path: pgBouncerConfig.LDAPBindPasswordFileName},
+					},
+				},
+			},
+		}).
+		WithContainerVolumeMount("pgbouncer", &corev1.VolumeMount{
+			Name:      ldapBindSecretVolumeName,
+			MountPath: pgBouncerConfig.LDAPBindPasswordMountDir,
+			ReadOnly:  true,
+		}, true)
 }
