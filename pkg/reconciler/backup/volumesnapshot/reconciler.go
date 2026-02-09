@@ -88,6 +88,13 @@ func (se *Reconciler) enrichSnapshot(
 	vs.Labels[utils.BackupNameLabelName] = backup.Name
 	vs.Labels[utils.MajorVersionLabelName] = strconv.Itoa(backup.Status.MajorVersion)
 
+	// Common labels
+	vs.Labels[utils.KubernetesAppManagedByLabelName] = utils.ManagerName
+	vs.Labels[utils.KubernetesAppLabelName] = utils.AppName
+	vs.Labels[utils.KubernetesAppInstanceLabelName] = cluster.Name
+	vs.Labels[utils.KubernetesAppVersionLabelName] = fmt.Sprint(backup.Status.MajorVersion)
+	vs.Labels[utils.KubernetesAppComponentLabelName] = utils.DatabaseComponentName
+
 	switch snapshotConfig.SnapshotOwnerReference {
 	case apiv1.SnapshotOwnerReferenceCluster:
 		cluster.SetInheritedDataAndOwnership(&vs.ObjectMeta)
@@ -287,6 +294,8 @@ func (se *Reconciler) completeSnapshotBackupStep(
 ) (*ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 	backup.Status.SetAsCompleted()
+	backup.Status.StoppedAt = backup.Status.ReconciliationTerminatedAt.DeepCopy()
+
 	snapshots, err := getBackupVolumeSnapshots(ctx, se.cli, backup.Namespace, backup.Name)
 	if err != nil {
 		return nil, err

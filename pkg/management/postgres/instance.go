@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -38,11 +39,13 @@ import (
 	"time"
 
 	"github.com/blang/semver"
+	"github.com/cloudnative-pg/machinery/pkg/envmap"
 	"github.com/cloudnative-pg/machinery/pkg/execlog"
 	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/cloudnative-pg/machinery/pkg/fileutils/compatibility"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"go.uber.org/atomic"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 
@@ -59,7 +62,6 @@ import (
 )
 
 const (
-	postgresName      = "postgres"
 	pgCtlName         = "pg_ctl"
 	pgRewindName      = "pg_rewind"
 	pgBaseBackupName  = "pg_basebackup"
@@ -72,6 +74,15 @@ const (
 	pqPingNoResponse = 2 // could not establish connection
 	pgPingNoAttempt  = 3 // connection not attempted (bad params)
 )
+
+// GetPostgresExecutableName returns the name of the PostgreSQL executable
+func GetPostgresExecutableName() string {
+	if name := os.Getenv("POSTGRES_NAME"); name != "" {
+		return name
+	}
+
+	return "postgres"
+}
 
 // shutdownMode represent a way to request the postmaster shutdown
 type shutdownMode string
@@ -171,6 +182,12 @@ type Instance struct {
 	// instanceCommandChan is a channel for requesting actions on the instance
 	instanceCommandChan chan InstanceCommand
 
+	// SessionID is a unique identifier generated at instance manager startup.
+	// This ID changes on every instance manager restart, including reboots that don't
+	// change the container ID. Used to detect if the instance manager was restarted
+	// during long-running operations like backups.
+	SessionID string
+
 	// InstanceManagerIsUpgrading tells if there is an instance manager upgrade in process
 	InstanceManagerIsUpgrading atomic.Bool
 
@@ -215,6 +232,9 @@ type Instance struct {
 	MetricsPortTLS bool
 
 	serverCertificateHandler serverCertificateHandler
+
+	// Cluster is the cluster this instance belongs to
+	Cluster *apiv1.Cluster
 }
 
 type serverCertificateHandler struct {
@@ -389,6 +409,7 @@ func NewInstance() *Instance {
 		slotsReplicatorChan:        make(chan *apiv1.ReplicationSlotsConfiguration),
 		roleSynchronizerChan:       make(chan *apiv1.ManagedConfiguration),
 		tablespaceSynchronizerChan: make(chan map[string]apiv1.TablespaceConfiguration),
+		SessionID:                  string(uuid.NewUUID()),
 	}
 }
 
@@ -671,7 +692,7 @@ func (instance *Instance) Reload(ctx context.Context) error {
 // Run this instance returning an OS process needed
 // to control the instance execution
 func (instance *Instance) Run() (*execlog.StreamingCmd, error) {
-	process, err := instance.CheckForExistingPostmaster(postgresName)
+	process, err := instance.CheckForExistingPostmaster(GetPostgresExecutableName())
 	if err != nil {
 		return nil, err
 	}
@@ -704,11 +725,11 @@ func (instance *Instance) Run() (*execlog.StreamingCmd, error) {
 		return nil, err
 	}
 
-	postgresCmd := exec.Command(postgresName, options...) // #nosec
+	postgresCmd := exec.Command(GetPostgresExecutableName(), options...) // #nosec
 	postgresCmd.Env = instance.buildPostgresEnv()
 	compatibility.AddInstanceRunCommands(postgresCmd)
 
-	streamingCmd, err := execlog.RunStreamingNoWait(postgresCmd, postgresName)
+	streamingCmd, err := execlog.RunStreamingNoWait(postgresCmd, GetPostgresExecutableName())
 	if err != nil {
 		return nil, err
 	}
@@ -716,16 +737,56 @@ func (instance *Instance) Run() (*execlog.StreamingCmd, error) {
 	return streamingCmd, nil
 }
 
+// buildPostgresEnv builds the environment variables that should be used by PostgreSQL
+// to run the main process, taking care of adding any library path that is needed for
+// extensions.
 func (instance *Instance) buildPostgresEnv() []string {
 	env := instance.Env
 	if env == nil {
 		env = os.Environ()
 	}
-	env = append(env,
-		"PG_OOM_ADJUST_FILE=/proc/self/oom_score_adj",
-		"PG_OOM_ADJUST_VALUE=0",
-	)
-	return env
+	envMap, _ := envmap.Parse(env)
+	envMap["PG_OOM_ADJUST_FILE"] = "/proc/self/oom_score_adj"
+	envMap["PG_OOM_ADJUST_VALUE"] = "0"
+
+	if instance.Cluster == nil {
+		return envMap.StringSlice()
+	}
+
+	// If there are no additional library paths, we use the environment variables
+	// of the current process
+	additionalLibraryPaths := collectLibraryPaths(instance.Cluster.Spec.PostgresConfiguration.Extensions)
+	if len(additionalLibraryPaths) == 0 {
+		return envMap.StringSlice()
+	}
+
+	// We add the additional library paths after the entries that are already
+	// available.
+	currentLibraryPath := envMap["LD_LIBRARY_PATH"]
+	if currentLibraryPath != "" {
+		currentLibraryPath += ":"
+	}
+	currentLibraryPath += strings.Join(additionalLibraryPaths, ":")
+	envMap["LD_LIBRARY_PATH"] = currentLibraryPath
+
+	return envMap.StringSlice()
+}
+
+// collectLibraryPaths returns a list of PATHS which should be added to LD_LIBRARY_PATH
+// given an extension
+func collectLibraryPaths(extensionList []apiv1.ExtensionConfiguration) []string {
+	result := make([]string, 0, len(extensionList))
+
+	for _, extension := range extensionList {
+		for _, libraryPath := range extension.LdLibraryPath {
+			result = append(
+				result,
+				filepath.Join(postgres.ExtensionsBaseDirectory, extension.Name, libraryPath),
+			)
+		}
+	}
+
+	return result
 }
 
 // WithActiveInstance execute the internal function while this
@@ -959,6 +1020,37 @@ func (instance *Instance) WaitForConfigReload(ctx context.Context) (*postgres.Po
 	return status, nil
 }
 
+// GetSynchronousReplicationMetadata reads the current PostgreSQL configuration
+// and extracts the parameters that were used to compute the synchronous_standby_names
+// GUC.
+func (instance *Instance) GetSynchronousReplicationMetadata(
+	ctx context.Context,
+) (*postgres.SynchronousStandbyNamesConfig, error) {
+	db, err := instance.GetSuperUserDB()
+	if err != nil {
+		return nil, err
+	}
+
+	var metadata string
+	row := db.QueryRowContext(
+		ctx, fmt.Sprintf("SHOW %s", postgres.CNPGSynchronousStandbyNamesMetadata))
+	err = row.Scan(&metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(metadata) == 0 {
+		return nil, nil
+	}
+
+	var result postgres.SynchronousStandbyNamesConfig
+	if err := json.Unmarshal([]byte(metadata), &result); err != nil {
+		return nil, fmt.Errorf("while decoding synchronous_standby_names metadata: %w", err)
+	}
+
+	return &result, nil
+}
+
 // waitForStreamingConnectionAvailable waits until we can connect to the passed
 // sql.DB connection using streaming protocol
 func waitForStreamingConnectionAvailable(ctx context.Context, db *sql.DB) error {
@@ -1052,11 +1144,12 @@ func (instance *Instance) Rewind(ctx context.Context) error {
 	instance.LogPgControldata(ctx, "before pg_rewind")
 
 	primaryConnInfo := instance.GetPrimaryConnInfo()
-	options := []string{
+	options := make([]string, 0, 6)
+	options = append(options,
 		"-P",
 		"--source-server", primaryConnInfo,
 		"--target-pgdata", instance.PgData,
-	}
+	)
 
 	// make sure restore_command is set in override.conf
 	if _, err := configurePostgresOverrideConfFile(instance.PgData, primaryConnInfo, ""); err != nil {
@@ -1316,10 +1409,13 @@ func (instance *Instance) GetPrimaryConnInfo() string {
 	result := buildPrimaryConnInfo(instance.GetClusterName()+"-rw", instance.GetPodName()) + " dbname=postgres"
 
 	standbyTCPUserTimeout := os.Getenv("CNPG_STANDBY_TCP_USER_TIMEOUT")
-	if len(standbyTCPUserTimeout) > 0 {
-		result = fmt.Sprintf("%s tcp_user_timeout='%s'", result,
-			strings.ReplaceAll(strings.ReplaceAll(standbyTCPUserTimeout, `\`, `\\`), `'`, `\'`))
+	if len(standbyTCPUserTimeout) == 0 {
+		// Default to 5000ms (5 seconds) if not explicitly set
+		standbyTCPUserTimeout = "5000"
 	}
+
+	result = fmt.Sprintf("%s tcp_user_timeout='%s'", result,
+		strings.ReplaceAll(strings.ReplaceAll(standbyTCPUserTimeout, `\`, `\\`), `'`, `\'`))
 
 	return result
 }

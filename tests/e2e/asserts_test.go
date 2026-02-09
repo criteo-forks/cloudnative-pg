@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,7 +40,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
-	"k8s.io/utils/strings/slices"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -176,12 +176,12 @@ func AssertSwitchoverWithHistory(
 
 	if !isReplica {
 		By("confirming that the all postgres containers have *.history file after switchover", func() {
-			pods = []string{}
 			timeout := 120
 
 			// Gather pod names
 			podList, err := clusterutils.ListPods(env.Ctx, env.Client, namespace, clusterName)
 			Expect(len(podList.Items), err).To(BeEquivalentTo(oldPodListLength))
+			pods = make([]string, 0, len(podList.Items))
 			for _, p := range podList.Items {
 				pods = append(pods, p.Name)
 			}
@@ -243,6 +243,13 @@ func AssertCreateCluster(
 	})
 	// Setting up a cluster with three pods is slow, usually 200-600s
 	AssertClusterIsReady(namespace, clusterName, testTimeouts[timeouts.ClusterIsReady], env)
+
+	// Verify pod sequentiality on fresh cluster creation
+	// This should only be checked here, not in AssertClusterIsReady,
+	// because after scale operations or pod deletions, gaps are expected
+	cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
+	Expect(err).ToNot(HaveOccurred())
+	AssertClusterHasSequentialPods(namespace, clusterName, cluster.Spec.Instances, env)
 }
 
 // AssertClusterIsReady checks the cluster has as many pods as in spec, that
@@ -318,6 +325,73 @@ func AssertClusterIsReady(namespace string, clusterName string, timeout int, env
 		}
 		GinkgoWriter.Println("Cluster ready, took", time.Since(start))
 	})
+}
+
+// AssertClusterHasSequentialPods verifies that pod serial numbers are sequential starting from 1.
+// Non-sequential numbering on a freshly created cluster suggests pods were recreated during
+// initial creation, indicating a potential issue requiring investigation.
+func AssertClusterHasSequentialPods(
+	namespace string,
+	clusterName string,
+	expectedInstances int,
+	env *environment.TestingEnvironment,
+) {
+	podList, err := clusterutils.ListPods(env.Ctx, env.Client, namespace, clusterName)
+	Expect(err).ToNot(HaveOccurred(), "failed to list cluster pods")
+	Expect(podList.Items).To(HaveLen(expectedInstances),
+		"cluster should have exactly %d pods", expectedInstances)
+
+	// Extract pod serial numbers
+	podSerials := make([]int, 0, len(podList.Items))
+	for _, pod := range podList.Items {
+		var serial int
+		_, err := fmt.Sscanf(pod.Name, clusterName+"-%d", &serial)
+		Expect(err).ToNot(HaveOccurred(),
+			"pod name %s should match expected format %s-<number>", pod.Name, clusterName)
+		podSerials = append(podSerials, serial)
+	}
+
+	// Build expected sequential serials [1, 2, 3, ..., expectedInstances]
+	expectedSerials := make([]int, expectedInstances)
+	for i := 0; i < expectedInstances; i++ {
+		expectedSerials[i] = i + 1
+	}
+
+	// Sort actual serials for comparison
+	slices.Sort(podSerials)
+
+	// Check if serials are sequential
+	if !slices.Equal(podSerials, expectedSerials) {
+		// Calculate which serials were skipped
+		if len(podSerials) == 0 {
+			Fail("No pods found for cluster")
+		}
+		maxSerial := podSerials[len(podSerials)-1]
+		var skippedSerials []int
+		serialIdx := 0
+		for i := 1; i <= maxSerial; i++ {
+			if serialIdx < len(podSerials) && podSerials[serialIdx] == i {
+				serialIdx++
+			} else {
+				skippedSerials = append(skippedSerials, i)
+			}
+		}
+
+		// Build detailed error message
+		errorMsg := fmt.Sprintf(
+			"Pod serial numbers are non-sequential on a freshly created cluster.\n"+
+				"Expected: %v\n"+
+				"Actual:   %v\n",
+			expectedSerials, podSerials)
+
+		if len(skippedSerials) > 0 {
+			errorMsg += fmt.Sprintf("Skipped serial number(s): %v\n", skippedSerials)
+		}
+
+		errorMsg += "\nThis requires investigation to determine the root cause.\n"
+
+		Fail(errorMsg)
+	}
 }
 
 func AssertClusterDefault(
@@ -551,6 +625,14 @@ func extensionExistsQuery(extName string) string {
 
 func schemaExistsQuery(namespaceName string) string {
 	return fmt.Sprintf("SELECT EXISTS(SELECT FROM pg_catalog.pg_namespace WHERE nspname='%v')", namespaceName)
+}
+
+func fdwExistsQuery(fdwName string) string {
+	return fmt.Sprintf("SELECT EXISTS(SELECT FROM pg_catalog.pg_foreign_data_wrapper WHERE fdwname='%v')", fdwName)
+}
+
+func foreignServerExistsQuery(serverName string) string {
+	return fmt.Sprintf("SELECT EXISTS(SELECT FROM pg_catalog.pg_foreign_server WHERE srvname='%v')", serverName)
 }
 
 // AssertDataExpectedCount verifies that an expected amount of rows exists on the table
@@ -1137,13 +1219,21 @@ func AssertDetachReplicaModeCluster(
 
 func AssertWritesToReplicaFails(
 	namespace, service, appDBName, appDBUser, appDBPass string,
+	connectionParams ...map[string]string,
 ) {
 	By(fmt.Sprintf("Verifying %v service doesn't allow writes", service), func() {
 		Eventually(func(g Gomega) {
 			forwardConn, conn, err := postgres.ForwardPSQLServiceConnection(
-				env.Ctx, env.Interface, env.RestClientConfig,
-				namespace, service,
-				appDBName, appDBUser, appDBPass)
+				env.Ctx,
+				env.Interface,
+				env.RestClientConfig,
+				namespace,
+				service,
+				appDBName,
+				appDBUser,
+				appDBPass,
+				connectionParams...,
+			)
 			defer func() {
 				_ = conn.Close()
 				forwardConn.Close()
@@ -1166,13 +1256,23 @@ func AssertWritesToReplicaFails(
 	})
 }
 
-func AssertWritesToPrimarySucceeds(namespace, service, appDBName, appDBUser, appDBPass string) {
+func AssertWritesToPrimarySucceeds(
+	namespace, service, appDBName, appDBUser, appDBPass string,
+	connectionParams ...map[string]string,
+) {
 	By(fmt.Sprintf("Verifying %v service correctly manages writes", service), func() {
 		Eventually(func(g Gomega) {
 			forwardConn, conn, err := postgres.ForwardPSQLServiceConnection(
-				env.Ctx, env.Interface, env.RestClientConfig,
-				namespace, service,
-				appDBName, appDBUser, appDBPass)
+				env.Ctx,
+				env.Interface,
+				env.RestClientConfig,
+				namespace,
+				service,
+				appDBName,
+				appDBUser,
+				appDBPass,
+				connectionParams...,
+			)
 			defer func() {
 				_ = conn.Close()
 				forwardConn.Close()
@@ -1440,22 +1540,25 @@ func AssertMetricsData(namespace, targetOne, targetTwo, targetSecret string, clu
 		Expect(err).ToNot(HaveOccurred())
 		for _, pod := range podList.Items {
 			podName := pod.GetName()
-			out, err := proxy.RetrieveMetricsFromInstance(env.Ctx, env.Interface, pod, cluster.IsMetricsTLSEnabled())
-			Expect(err).ToNot(HaveOccurred())
-			Expect(strings.Contains(out,
-				fmt.Sprintf(`cnpg_some_query_rows{datname="%v"} 0`, targetOne))).Should(BeTrue(),
-				"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
-			Expect(strings.Contains(out,
-				fmt.Sprintf(`cnpg_some_query_rows{datname="%v"} 0`, targetTwo))).Should(BeTrue(),
-				"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
-			Expect(strings.Contains(out, fmt.Sprintf(`cnpg_some_query_test_rows{datname="%v"} 1`,
-				targetSecret))).Should(BeTrue(),
-				"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
+			var out string
+			var err error
+			Eventually(func(g Gomega) {
+				out, err = proxy.RetrieveMetricsFromInstance(env.Ctx, env.Interface, pod, cluster.IsMetricsTLSEnabled())
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(strings.Contains(out,
+					fmt.Sprintf(`cnpg_some_query_rows{datname="%v"} 0`, targetOne))).Should(BeTrue(),
+					"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
+				g.Expect(strings.Contains(out,
+					fmt.Sprintf(`cnpg_some_query_rows{datname="%v"} 0`, targetTwo))).Should(BeTrue(),
+					"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
+				g.Expect(strings.Contains(out, fmt.Sprintf(`cnpg_some_query_test_rows{datname="%v"} 1`,
+					targetSecret))).Should(BeTrue(),
+					"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
+			}, testTimeouts[timeouts.Short]).To(Succeed())
 
 			if pod.Name != cluster.Status.CurrentPrimary {
 				continue
 			}
-
 			Expect(out).Should(ContainSubstring("last_available_backup_timestamp"))
 			Expect(out).Should(ContainSubstring("last_failed_backup_timestamp"))
 		}
@@ -1471,9 +1574,11 @@ func CreateAndAssertServerCertificatesSecrets(
 	)
 	Expect(err).ToNot(HaveOccurred())
 
-	serverPair, err := caPair.CreateAndSignPair(cluster.GetServiceReadWriteName(), certs.CertTypeServer,
-		cluster.GetClusterAltDNSNames(),
-	)
+	altDNSNames := cluster.GetClusterAltDNSNames()
+	// Required to allow connecting via port-forwarding using "localhost" as the host
+	altDNSNames = append(altDNSNames, "localhost")
+
+	serverPair, err := caPair.CreateAndSignPair(cluster.GetServiceReadWriteName(), certs.CertTypeServer, altDNSNames)
 	Expect(err).ToNot(HaveOccurred())
 	serverSecret := serverPair.GenerateCertificateSecret(namespace, tlsSecName)
 	err = env.Client.Create(env.Ctx, serverSecret)
@@ -2082,6 +2187,7 @@ func assertReadWriteConnectionUsingPgBouncerService(
 	clusterName,
 	poolerYamlFilePath string,
 	isPoolerRW bool,
+	connectionParams ...map[string]string,
 ) {
 	poolerService, err := yaml.GetResourceNameFromYAML(env.Scheme, poolerYamlFilePath)
 	Expect(err).ToNot(HaveOccurred())
@@ -2090,16 +2196,24 @@ func assertReadWriteConnectionUsingPgBouncerService(
 		env.Ctx, env.Client,
 		clusterName, namespace, apiv1.ApplicationUserSecretSuffix)
 	Expect(err).ToNot(HaveOccurred())
-	AssertConnection(namespace, poolerService, postgres.AppDBName, appUser, generatedAppUserPassword, env)
+
+	// Get the database name from the cluster configuration
+	cluster, err := clusterutils.Get(env.Ctx, env.Client, namespace, clusterName)
+	Expect(err).ToNot(HaveOccurred())
+
+	dbName := cluster.GetApplicationDatabaseName()
+	if dbName == "" {
+		dbName = apiv1.DefaultApplicationDatabaseName
+	}
 
 	// verify that, if pooler type setup read write then it will allow both read and
 	// write operations or if pooler type setup read only then it will allow only read operations
 	if isPoolerRW {
-		AssertWritesToPrimarySucceeds(namespace, poolerService, "app", appUser,
-			generatedAppUserPassword)
+		AssertWritesToPrimarySucceeds(namespace, poolerService, dbName, appUser,
+			generatedAppUserPassword, connectionParams...)
 	} else {
-		AssertWritesToReplicaFails(namespace, poolerService, "app", appUser,
-			generatedAppUserPassword)
+		AssertWritesToReplicaFails(namespace, poolerService, dbName, appUser,
+			generatedAppUserPassword, connectionParams...)
 	}
 }
 
@@ -2463,7 +2577,6 @@ func collectAndAssertDefaultMetricsPresentOnEachPod(
 			"cnpg_backends_waiting_total",
 			"cnpg_pg_postmaster_start_time",
 			"cnpg_pg_replication",
-			"cnpg_pg_stat_archiver",
 			"cnpg_pg_stat_bgwriter",
 			"cnpg_pg_stat_database",
 		}
@@ -2478,24 +2591,26 @@ func collectAndAssertDefaultMetricsPresentOnEachPod(
 		Expect(err).ToNot(HaveOccurred())
 		for _, pod := range podList.Items {
 			podName := pod.GetName()
-			out, err := proxy.RetrieveMetricsFromInstance(env.Ctx, env.Interface, pod, tlsEnabled)
-			Expect(err).ToNot(HaveOccurred())
+			Eventually(func(g Gomega) {
+				out, err := proxy.RetrieveMetricsFromInstance(env.Ctx, env.Interface, pod, tlsEnabled)
+				g.Expect(err).ToNot(HaveOccurred())
 
-			// error should be zero on each pod metrics
-			Expect(strings.Contains(out, "cnpg_collector_last_collection_error 0")).Should(BeTrue(),
-				"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
-			// verify that, default set of monitoring queries should not be existed on each pod
-			for _, data := range defaultMetrics {
-				if expectPresent {
-					Expect(strings.Contains(out, data)).Should(BeTrue(),
-						"Metric collection issues on pod %v."+
-							"\nFor expected keyword '%v'.\nCollected metrics:\n%v", podName, data, out)
-				} else {
-					Expect(strings.Contains(out, data)).Should(BeFalse(),
-						"Metric collection issues on pod %v."+
-							"\nFor expected keyword '%v'.\nCollected metrics:\n%v", podName, data, out)
+				// error should be zero on each pod metrics
+				g.Expect(strings.Contains(out, "cnpg_collector_last_collection_error 0")).Should(BeTrue(),
+					"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
+				// verify that, default set of monitoring queries should not be existed on each pod
+				for _, data := range defaultMetrics {
+					if expectPresent {
+						g.Expect(strings.Contains(out, data)).Should(BeTrue(),
+							"Metric collection issues on pod %v."+
+								"\nFor expected keyword '%v'.\nCollected metrics:\n%v", podName, data, out)
+					} else {
+						g.Expect(strings.Contains(out, data)).Should(BeFalse(),
+							"Metric collection issues on pod %v."+
+								"\nFor expected keyword '%v'.\nCollected metrics:\n%v", podName, data, out)
+					}
 				}
-			}
+			}, testTimeouts[timeouts.Short]).Should(Succeed())
 		}
 	})
 }
@@ -2538,18 +2653,20 @@ func collectAndAssertCollectorMetricsPresentOnEachPod(cluster *apiv1.Cluster) {
 		Expect(err).ToNot(HaveOccurred())
 		for _, pod := range podList.Items {
 			podName := pod.GetName()
-			out, err := proxy.RetrieveMetricsFromInstance(env.Ctx, env.Interface, pod, cluster.IsMetricsTLSEnabled())
-			Expect(err).ToNot(HaveOccurred())
+			Eventually(func(g Gomega) {
+				out, err := proxy.RetrieveMetricsFromInstance(env.Ctx, env.Interface, pod, cluster.IsMetricsTLSEnabled())
+				g.Expect(err).ToNot(HaveOccurred())
 
-			// error should be zero on each pod metrics
-			Expect(strings.Contains(out, "cnpg_collector_last_collection_error 0")).Should(BeTrue(),
-				"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
-			// verify that, default set of monitoring queries should not be existed on each pod
-			for _, data := range cnpgCollectorMetrics {
-				Expect(strings.Contains(out, data)).Should(BeTrue(),
-					"Metric collection issues on pod %v."+
-						"\nFor expected keyword '%v'.\nCollected metrics:\n%v", podName, data, out)
-			}
+				// error should be zero on each pod metrics
+				g.Expect(strings.Contains(out, "cnpg_collector_last_collection_error 0")).Should(BeTrue(),
+					"Metric collection issues on %v.\nCollected metrics:\n%v", podName, out)
+				// verify that, default set of monitoring queries should not be existed on each pod
+				for _, data := range cnpgCollectorMetrics {
+					g.Expect(strings.Contains(out, data)).Should(BeTrue(),
+						"Metric collection issues on pod %v."+
+							"\nFor expected keyword '%v'.\nCollected metrics:\n%v", podName, data, out)
+				}
+			}, testTimeouts[timeouts.Short]).To(Succeed())
 		}
 	})
 }
@@ -2608,6 +2725,7 @@ func GetYAMLContent(sampleFilePath string) ([]byte, error) {
 		envVars := buildTemplateEnvs(map[string]string{
 			"E2E_PRE_ROLLING_UPDATE_IMG": preRollingUpdateImg,
 			"E2E_CSI_STORAGE_CLASS":      csiStorageClass,
+			"PG_MAJOR":                   strconv.FormatUint(env.PostgresVersion, 10),
 		})
 
 		if serverName := os.Getenv("SERVER_NAME"); serverName != "" {
@@ -2811,7 +2929,10 @@ func AssertClusterReplicationSlotsAligned(
 	podList, err := clusterutils.ListPods(env.Ctx, env.Client, namespace, clusterName)
 	Expect(err).ToNot(HaveOccurred())
 	Eventually(func(g Gomega) {
-		var lsnList []string
+		numPods := len(podList.Items)
+		// Capacity calculation: primary has (N-1) HA slots, each of the (N-1) replicas
+		// has (N-2) slots. Total LSNs: (N-1) + (N-1)*(N-2) = (N-1)^2
+		lsnList := make([]string, 0, (numPods-1)*(numPods-1))
 		for _, pod := range podList.Items {
 			out, err := replicationslot.GetReplicationSlotLsnsOnPod(
 				env.Ctx, env.Client, env.Interface, env.RestClientConfig,
@@ -2931,7 +3052,7 @@ func assertPredicateClusterHasPhase(namespace, clusterName string, phase []strin
 // If any assertion fails, it will print an error message with details about the failed metric collection.
 //
 // Note: This function is typically used in testing scenarios to validate metric collection behavior.
-func assertIncludesMetrics(rawMetricsOutput string, expectedMetrics map[string]*regexp.Regexp) {
+func assertIncludesMetrics(g Gomega, rawMetricsOutput string, expectedMetrics map[string]*regexp.Regexp) {
 	debugDetails := fmt.Sprintf("Priting rawMetricsOutput:\n%s", rawMetricsOutput)
 	withDebugDetails := func(baseErrMessage string) string {
 		return fmt.Sprintf("%s\n%s\n", baseErrMessage, debugDetails)
@@ -2942,22 +3063,22 @@ func assertIncludesMetrics(rawMetricsOutput string, expectedMetrics map[string]*
 
 		// match a metric with the value of expectedMetrics key
 		match := re.FindString(rawMetricsOutput)
-		Expect(match).NotTo(BeEmpty(), withDebugDetails(fmt.Sprintf("Found no match for metric %s", key)))
+		g.Expect(match).NotTo(BeEmpty(), withDebugDetails(fmt.Sprintf("Found no match for metric %s", key)))
 
 		// extract the value from the metric previously matched
 		value := strings.Fields(match)[1]
-		Expect(strings.Fields(match)[1]).NotTo(BeEmpty(),
+		g.Expect(strings.Fields(match)[1]).NotTo(BeEmpty(),
 			withDebugDetails(fmt.Sprintf("Found no result for metric %s.Metric line: %s", key, match)))
 
 		// expect the expectedMetrics regexp to match the value of the metric
-		Expect(valueRe.MatchString(value)).To(BeTrue(),
+		g.Expect(valueRe.MatchString(value)).To(BeTrue(),
 			withDebugDetails(fmt.Sprintf("Expected %s to have value %v but got %s", key, valueRe, value)))
 	}
 }
 
-func assertExcludesMetrics(rawMetricsOutput string, nonCollected []string) {
+func assertExcludesMetrics(g Gomega, rawMetricsOutput string, nonCollected []string) {
 	for _, nonCollectable := range nonCollected {
 		// match a metric with the value of expectedMetrics key
-		Expect(rawMetricsOutput).NotTo(ContainSubstring(nonCollectable))
+		g.Expect(rawMetricsOutput).NotTo(ContainSubstring(nonCollectable))
 	}
 }

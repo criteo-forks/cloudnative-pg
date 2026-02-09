@@ -14,12 +14,12 @@ title: Installation and upgrades
 The operator can be installed like any other resource in Kubernetes,
 through a YAML manifest applied via `kubectl`.
 
-You can install the [latest operator manifest](https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.26/releases/cnpg-1.26.3.yaml)
+You can install the [latest operator manifest](https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.1.yaml)
 for this minor release as follows:
 
 ```sh
 kubectl apply --server-side -f \
-  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.26/releases/cnpg-1.26.3.yaml
+  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.1.yaml
 ```
 
 You can verify that with:
@@ -46,7 +46,7 @@ kubectl cnpg install generate \
 Please refer to ["`cnpg` plugin"](./kubectl-plugin.md#generation-of-installation-manifests) documentation
 for a more comprehensive example. 
 
-!!! Warning
+:::warning
     If you are deploying CloudNativePG on GKE and get an error (`... failed to
     call webhook...`), be aware that by default traffic between worker nodes
     and control plane is blocked by the firewall except for a few specific
@@ -57,6 +57,7 @@ for a more comprehensive example.
     You'll need to either change the `targetPort` in the webhook service, to be
     one of the allowed ones, or open the webhooks' port (`9443`) on the
     firewall.
+:::
 
 ### Testing the latest development snapshot
 
@@ -80,13 +81,14 @@ specific minor release, you can just run:
 
 ```sh
 curl -sSfL \
-  https://raw.githubusercontent.com/cloudnative-pg/artifacts/release-1.26/manifests/operator-manifest.yaml | \
+  https://raw.githubusercontent.com/cloudnative-pg/artifacts/release-1.28/manifests/operator-manifest.yaml | \
   kubectl apply --server-side -f -
 ```
 
-!!! Important
+:::info[Important]
     Snapshots are not supported by the CloudNativePG Community, and are not
     intended for use in production.
+:::
 
 ### Using the Helm Chart
 
@@ -110,9 +112,10 @@ When installed through the manifest or the `cnpg` plugin, it is called
 `cnpg-controller-manager` by default. When installed via Helm, the default name
 is `cnpg-cloudnative-pg`.
 
-!!! Note
+:::note
     With Helm you can customize the name of the deployment via the
     `fullnameOverride` field in the [*"values.yaml"* file](https://helm.sh/docs/chart_template_guide/values_files/).
+:::
 
 You can get more information using the `describe` command in `kubectl`:
 
@@ -141,17 +144,19 @@ tolerations to make sure that the operator does not run on the same nodes where
 the actual PostgreSQL clusters are running (this might even include the control
 plane for self-managed Kubernetes installations).
 
-!!! Seealso "Operator configuration"
+:::note[Operator configuration]
     You can change the default behavior of the operator by overriding
     some default options. For more information, please refer to the
     ["Operator configuration"](operator_conf.md) section.
+:::
 
 ## Upgrades
 
-!!! Important
+:::info[Important]
     Please carefully read the [release notes](release_notes.md)
     before performing an upgrade as some versions might require
     extra steps.
+:::
 
 Upgrading CloudNativePG operator is a two-step process:
 
@@ -172,16 +177,18 @@ update concludes with a switchover, which is governed by the
 the switchover automatically. If set to `supervised`, the user must manually
 promote the new primary instance using the `cnpg` plugin for `kubectl`.
 
-!!! Seealso "Rolling updates"
+:::note[Rolling updates]
     This process is discussed in-depth on the [Rolling Updates](rolling_update.md) page.
+:::
 
-!!! Important
+:::info[Important]
     In case `primaryUpdateStrategy` is set to the default value of `unsupervised`,
     an upgrade of the operator will trigger a switchover on your PostgreSQL cluster,
     causing a (normally negligible) downtime. If your PostgreSQL Cluster has only one
     instance, the instance will be automatically restarted as `supervised` value is
     not supported for `primaryUpdateStrategy`. In either case, your applications will
     have to reconnect to PostgreSQL.
+:::
 
 The default rolling update behavior can be replaced with in-place updates of
 the instance manager. This approach does not require a restart of the
@@ -260,19 +267,47 @@ removed before installing the new one. This won't affect user data but
 only the operator itself.
 
 
+### Upgrading to 1.28.0 or 1.27.x
+
+:::info[Important]
+    We strongly recommend that all CloudNativePG users upgrade to version
+    1.28.0, or at least to the latest stable version of your current minor release
+    (e.g., 1.27.x).
+:::
+
+### Upgrading to 1.27 from a previous minor version
+
+:::info[Important]
+    We strongly recommend that all CloudNativePG users upgrade to version
+    1.27.0, or at least to the latest stable version of your current minor release
+    (e.g., 1.26.1).
+:::
+
+Version 1.27 introduces a change in the default behavior of the
+[liveness probe](instance_manager.md#liveness-probe): it now enforces the
+[shutdown of an isolated primary](instance_manager.md#primary-isolation)
+within the `livenessProbeTimeout` (30 seconds).
+
+If this behavior is not suitable for your environment, you can disable the
+*isolation check* in the liveness probe with the following configuration:
+
+```yaml
+spec:
+  probes:
+    liveness:
+      isolationCheck:
+        enabled: false
+```
+
 ### Upgrading to 1.26 from a previous minor version
 
-!!! Important
-    We strongly recommend that all CloudNativePG users upgrade to version
-    1.26.1, or at a minimum, to the latest stable version of your current minor
-    release (for example, 1.25.x).
-
-!!! Warning
+:::warning
     Due to changes in the startup probe for the manager component
     ([#6623](https://github.com/cloudnative-pg/cloudnative-pg/pull/6623)),
     upgrading the operator will trigger a restart of your PostgreSQL clusters,
     even if in-place updates are enabled (`ENABLE_INSTANCE_MANAGER_INPLACE_UPDATES=true`).
     Your applications will need to reconnect to PostgreSQL after the upgrade.
+:::
 
 #### Deprecation of backup metrics and fields in the `Cluster` `.status`
 
@@ -293,11 +328,12 @@ The following Prometheus metrics are also deprecated:
 - `cnpg_collector_last_failed_backup_timestamp`
 - `cnpg_collector_last_available_backup_timestamp`
 
-!!! Warning
+:::warning
     If you have migrated to a plugin-based backup and recovery solution such as
     Barman Cloud, these fields and metrics are no longer synchronized and will
     not be updated. Users still relying on the in-core support for Barman Cloud
     and volume snapshots can continue to use these fields for the time being.
+:::
 
 Under the new plugin-based approach, multiple backup methods can operate
 simultaneously, each with its own timeline for backup and recovery. For
@@ -322,56 +358,3 @@ that apply declarative changes to enable or disable hibernation.
 The `hibernate status` command has been removed, as its purpose is now
 fulfilled by the standard `status` command.
 
-### Upgrading to 1.25 from a previous minor version
-
-!!! Warning
-    Every time you are upgrading to a higher minor release, make sure you
-    go through the release notes and upgrade instructions of all the
-    intermediate minor releases. For example, if you want to move
-    from 1.23.x to 1.25, make sure you go through the release notes
-    and upgrade instructions for 1.24 and 1.25.
-
-No changes to existing 1.24 cluster configurations are required when upgrading
-to 1.25.
-
-### Upgrading to 1.24 from a previous minor version
-
-#### From Replica Clusters to Distributed Topology
-
-One of the key enhancements in CloudNativePG 1.24.0 is the upgrade of the
-replica cluster feature.
-
-The former replica cluster feature, now referred to as the "Standalone Replica
-Cluster," is no longer recommended for Disaster Recovery (DR) and High
-Availability (HA) scenarios that span multiple Kubernetes clusters. Standalone
-replica clusters are best suited for read-only workloads, such as reporting,
-OLAP, or creating development environments with test data.
-
-For DR and HA purposes, CloudNativePG now introduces the Distributed Topology
-strategy for replica clusters. This new strategy allows you to build PostgreSQL
-clusters across private, public, hybrid, and multi-cloud environments, spanning
-multiple regions and potentially different cloud providers. It also provides an
-API to control the switchover operation, ensuring that only one cluster acts as
-the primary at any given time.
-
-This Distributed Topology strategy enhances resilience and scalability, making
-it a robust solution for modern, distributed applications that require high
-availability and disaster recovery capabilities across diverse infrastructure
-setups.
-
-You can seamlessly transition from a previous replica cluster configuration to a
-distributed topology by modifying all the `Cluster` resources involved in the
-distributed PostgreSQL setup. Ensure the following steps are taken:
-
-- Configure the `externalClusters` section to include all the clusters involved
-  in the distributed topology. We strongly suggest using the same configuration
-  across all `Cluster` resources for maintainability and consistency.
-- Configure the `primary` and `source` fields in the `.spec.replica` stanza to
-  reflect the distributed topology. The `primary` field should contain the name
-  of the current primary cluster in the distributed topology, while the `source`
-  field should contain the name of the cluster each `Cluster` resource is
-  replicating from. It is important to note that the `enabled` field, which was
-  previously set to `true` or `false`, should now be unset (default).
-
-For more information, please refer to
-the ["Distributed Topology" section for replica clusters](replica_cluster.md#distributed-topology).

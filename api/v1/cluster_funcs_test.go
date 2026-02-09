@@ -1749,3 +1749,42 @@ var _ = Describe("Probes configuration", func() {
 			"configured probe should not be modified with zero values")
 	})
 })
+
+var _ = Describe("Failover quorum", func() {
+	clusterWithoutSynchrousReplication := &Cluster{
+		Spec: ClusterSpec{
+			PostgresConfiguration: PostgresConfiguration{
+				Synchronous: nil,
+			},
+		},
+	}
+	clusterWithFailoverQuorumEnabled := &Cluster{
+		Spec: ClusterSpec{
+			PostgresConfiguration: PostgresConfiguration{
+				Synchronous: &SynchronousReplicaConfiguration{
+					FailoverQuorum: true,
+				},
+			},
+		},
+	}
+	clusterWithFailoverQuorumDisabled := &Cluster{
+		Spec: ClusterSpec{
+			PostgresConfiguration: PostgresConfiguration{
+				Synchronous: &SynchronousReplicaConfiguration{
+					FailoverQuorum: false,
+				},
+			},
+		},
+	}
+
+	DescribeTable(
+		"failover quorum getter",
+		func(cluster *Cluster, expected bool) {
+			actual := cluster.IsFailoverQuorumActive()
+			Expect(actual).To(Equal(expected))
+		},
+		Entry("with no synchronous replication configuration", clusterWithoutSynchrousReplication, false),
+		Entry("with failover quorum enabled", clusterWithFailoverQuorumEnabled, true),
+		Entry("with failover quorum disabled", clusterWithFailoverQuorumDisabled, false),
+	)
+})

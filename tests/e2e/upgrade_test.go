@@ -272,18 +272,12 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 			)
 			Expect(err).ToNot(HaveOccurred())
 
-			for i := 1; i < 4; i++ {
-				podName := fmt.Sprintf("%v-%v", clusterName, i)
-				podNamespacedName := types.NamespacedName{
-					Namespace: upgradeNamespace,
-					Name:      podName,
-				}
-				Eventually(func() (string, error) {
-					pod := &corev1.Pod{}
-					if err := env.Client.Get(env.Ctx, podNamespacedName, pod); err != nil {
-						return "", err
-					}
+			// Get all pods in the cluster dynamically
+			podList, err := clusterutils.ListPods(env.Ctx, env.Client, upgradeNamespace, clusterName)
+			Expect(err).ToNot(HaveOccurred())
 
+			for _, pod := range podList.Items {
+				Eventually(func() (string, error) {
 					out, _, err := exec.QueryInInstancePod(
 						env.Ctx, env.Client, env.Interface, env.RestClientConfig,
 						exec.PodLocator{
@@ -294,7 +288,7 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 						"SELECT count(*) = 0 FROM postswitch")
 					return strings.TrimSpace(out), err
 				}, 240).Should(BeEquivalentTo("t"),
-					"Pod %v should have followed the new primary", podName)
+					"Pod %v should have followed the new primary", pod.Name)
 			}
 		})
 	}
@@ -614,9 +608,9 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 
 		assertPGBouncerPodsAreReady(upgradeNamespace, pgBouncerSampleFile, 2)
 
-		var podUIDs []types.UID
 		podList, err := clusterutils.ListPods(env.Ctx, env.Client, upgradeNamespace, clusterName1)
 		Expect(err).ToNot(HaveOccurred())
+		podUIDs := make([]types.UID, 0, len(podList.Items))
 		for _, pod := range podList.Items {
 			podUIDs = append(podUIDs, pod.GetUID())
 		}
@@ -673,6 +667,10 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 		})
 
 		AssertConfUpgrade(clusterName1, upgradeNamespace)
+
+		By("verifying connection through pooler after upgrade", func() {
+			assertReadWriteConnectionUsingPgBouncerService(upgradeNamespace, clusterName1, pgBouncerSampleFile, true)
+		})
 
 		By("installing a second Cluster on the upgraded operator", func() {
 			// set the serverName to a random name

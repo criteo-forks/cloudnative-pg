@@ -25,7 +25,7 @@ defaults:
 env:
   # The minimal k8s version supported, k8s version smaller than this one will be removed from vendor
   MINIMAL_K8S: "1.27"
-  MINIMAL_OCP: "4.12"
+  MINIMAL_OCP: "4.14"
 
 jobs:
 
@@ -34,7 +34,7 @@ jobs:
     steps:
       -
         name: Checkout code
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       -
         # There is no command to get EKS k8s versions, we have to parse the documentation
         name: Get updated EKS versions
@@ -106,11 +106,12 @@ jobs:
       -
         name: Get updated OpenShift versions
         run: |
-          # We limit the range starting on 4 to 9 to skip the 13 version
-          # this needs to be updated when the 15 version is also EOL
+          # Match OpenShift 4.14, 4.16-4.19, and 4.20+
+          # Version 4.15 is excluded as it is EOL
           curl -s https://mirror.openshift.com/pub/openshift-v4/clients/ocp/ | \
-          grep -e 'href.*"4\.1[24-9]\.[0-9].*"' | \
-          sed -e 's/\(.*\)href="\(4\.1[2-9]\)\(.*\)/\2/' | \
+          grep -Eo 'href.*"4\.(1[46-9]|[2-9][0-9])\.[0-9].*"' | \
+          grep -v rc | \
+          sed -E 's/href="//;s/\/"//;s/(4\.(1[46-9]|[2-9][0-9]))(\..*$)/\1/' | \
           sort -Vru | \
           awk -vv="$MINIMAL_OCP" '$0>=v {print $0}' | \
           jq -Rn '[inputs]' | tee .github/openshift_versions.json
@@ -120,7 +121,7 @@ jobs:
         if: github.event.inputs.limit == null || github.event.inputs.limit == 'ocp'
       -
         name: Create Pull Request if versions have been updated
-        uses: peter-evans/create-pull-request@84ae59a2cdc2258d6fa0732dd66352dddae2a412 # v7
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8
         with:
           token: ${{ secrets.REPO_GHA_PAT }}
           title: "feat: Public Cloud K8S versions update"

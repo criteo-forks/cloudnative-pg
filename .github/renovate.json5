@@ -8,11 +8,11 @@
   ],
   rebaseWhen: 'never',
   prConcurrentLimit: 5,
-  baseBranches: [
+  baseBranchPatterns: [
     'main',
     'release-1.25',
-    'release-1.26',
     'release-1.27',
+    'release-1.28',
   ],
   ignorePaths: [
     'docs/**',
@@ -99,15 +99,15 @@
     },
     {
       customType: 'regex',
-      fileMatch: [
-        '^tests\\/utils\\/minio\\/minio\\.go$',
+      managerFilePatterns: [
+        '/^tests\\/utils\\/minio\\/minio\\.go$/',
       ],
       matchStrings: [
         'minioImage = "(?<depName>.+?):(?<currentValue>.*?)"',
         'minioClientImage = "(?<depName>.+?):(?<currentValue>.*?)"',
       ],
       datasourceTemplate: 'docker',
-      versioningTemplate: "regex:^RELEASE\\.(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})T\\d{2}-\\d{2}-\\d{2}Z$"
+      versioningTemplate: 'regex:^RELEASE\\.(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})T\\d{2}-\\d{2}-\\d{2}Z$',
     },
     {
       customType: 'regex',
@@ -230,7 +230,7 @@
       pinDigests: false,
       matchPackageNames: [
         'vmware-tanzu{/,}**',
-        'minio{/,}**'
+        'minio{/,}**',
       ],
     },
     {

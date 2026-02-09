@@ -49,7 +49,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/webserver/probes"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
@@ -208,8 +207,11 @@ func (v *ClusterCustomValidator) validate(r *apiv1.Cluster) (allErrs field.Error
 		v.validateRetentionPolicy,
 		v.validateConfiguration,
 		v.validateSynchronousReplicaConfiguration,
+		v.validateFailoverQuorumAlphaAnnotation,
+		v.validateFailoverQuorum,
 		v.validateLDAP,
 		v.validateReplicationSlots,
+		v.validateSynchronizeLogicalDecoding,
 		v.validateEnv,
 		v.validateManagedServices,
 		v.validateManagedRoles,
@@ -220,6 +222,7 @@ func (v *ClusterCustomValidator) validate(r *apiv1.Cluster) (allErrs field.Error
 		v.validatePromotionToken,
 		v.validatePluginConfiguration,
 		v.validateLivenessPingerProbe,
+		v.validateExtensions,
 	}
 
 	for _, validate := range validations {
@@ -932,34 +935,27 @@ func (v *ClusterCustomValidator) validateResources(r *apiv1.Cluster) field.Error
 	return result
 }
 
-// validateResourceRequirements validates that requests don't exceed limits for CPU and memory
-func validateResourceRequirements(resources corev1.ResourceRequirements, path *field.Path) field.ErrorList {
+// validateResourceRequirements checks that requests do not exceed limits for CPU and memory.
+func validateResourceRequirements(req corev1.ResourceRequirements, path *field.Path) field.ErrorList {
 	var result field.ErrorList
-
-	cpuRequests := resources.Requests.Cpu()
-	cpuLimits := resources.Limits.Cpu()
-	if !cpuRequests.IsZero() && !cpuLimits.IsZero() {
-		if cpuRequests.Cmp(*cpuLimits) > 0 {
-			result = append(result, field.Invalid(
-				path.Child("requests", "cpu"),
-				cpuRequests.String(),
-				"CPU request is greater than the limit",
-			))
-		}
+	cpuRequests := req.Requests.Cpu()
+	cpuLimits := req.Limits.Cpu()
+	if !cpuRequests.IsZero() && !cpuLimits.IsZero() && cpuRequests.Cmp(*cpuLimits) > 0 {
+		result = append(result, field.Invalid(
+			path.Child("requests", "cpu"),
+			cpuRequests.String(),
+			"CPU request is greater than the limit",
+		))
 	}
-
-	memoryRequests := resources.Requests.Memory()
-	memoryLimits := resources.Limits.Memory()
-	if !memoryRequests.IsZero() && !memoryLimits.IsZero() {
-		if memoryRequests.Cmp(*memoryLimits) > 0 {
-			result = append(result, field.Invalid(
-				path.Child("requests", "memory"),
-				memoryRequests.String(),
-				"Memory request is greater than the limit",
-			))
-		}
+	memoryRequests := req.Requests.Memory()
+	memoryLimits := req.Limits.Memory()
+	if !memoryRequests.IsZero() && !memoryLimits.IsZero() && memoryRequests.Cmp(*memoryLimits) > 0 {
+		result = append(result, field.Invalid(
+			path.Child("requests", "memory"),
+			memoryRequests.String(),
+			"Memory request is greater than the limit",
+		))
 	}
-
 	return result
 }
 
@@ -1014,14 +1010,81 @@ func (v *ClusterCustomValidator) validateSynchronousReplicaConfiguration(r *apiv
 
 	var result field.ErrorList
 
-	if r.Spec.PostgresConfiguration.Synchronous.Number >= (r.Spec.Instances +
-		len(r.Spec.PostgresConfiguration.Synchronous.StandbyNamesPost) +
-		len(r.Spec.PostgresConfiguration.Synchronous.StandbyNamesPre)) {
+	cfg := r.Spec.PostgresConfiguration.Synchronous
+	if cfg.Number >= (r.Spec.Instances +
+		len(cfg.StandbyNamesPost) +
+		len(cfg.StandbyNamesPre)) {
 		err := field.Invalid(
 			field.NewPath("spec", "postgresql", "synchronous"),
-			r.Spec.PostgresConfiguration.Synchronous,
+			cfg,
 			"Invalid synchronous configuration: the number of synchronous replicas must be less than the "+
 				"total number of instances and the provided standby names.",
+		)
+		result = append(result, err)
+	}
+
+	return result
+}
+
+func (v *ClusterCustomValidator) validateFailoverQuorumAlphaAnnotation(r *apiv1.Cluster) field.ErrorList {
+	annotationValue, ok := r.Annotations[utils.FailoverQuorumAnnotationName]
+	if !ok {
+		return nil
+	}
+
+	failoverQuorumActive, err := strconv.ParseBool(annotationValue)
+	if err != nil {
+		return field.ErrorList{
+			field.Invalid(
+				field.NewPath("metadata", "annotations", utils.FailoverQuorumAnnotationName),
+				r.Annotations[utils.FailoverQuorumAnnotationName],
+				"Invalid failoverQuorum annotation value, expected boolean.",
+			),
+		}
+	}
+
+	if !failoverQuorumActive {
+		return nil
+	}
+
+	if r.Spec.PostgresConfiguration.Synchronous == nil {
+		return field.ErrorList{
+			field.Required(
+				field.NewPath("spec", "postgresql", "synchronous"),
+				"Invalid failoverQuorum configuration: synchronous replication configuration "+
+					"is required.",
+			),
+		}
+	}
+
+	return nil
+}
+
+func (v *ClusterCustomValidator) validateFailoverQuorum(r *apiv1.Cluster) field.ErrorList {
+	var result field.ErrorList
+
+	if !r.IsFailoverQuorumActive() {
+		return nil
+	}
+
+	cfg := r.Spec.PostgresConfiguration.Synchronous
+	if cfg == nil {
+		err := field.Required(
+			field.NewPath("spec", "postgresql", "synchronous"),
+			"Invalid failoverQuorum configuration: synchronous replication configuration "+
+				"is required.",
+		)
+		result = append(result, err)
+		return result
+	}
+
+	if cfg.Number <= len(cfg.StandbyNamesPost)+len(cfg.StandbyNamesPre) {
+		err := field.Invalid(
+			field.NewPath("spec", "postgresql", "synchronous"),
+			cfg,
+			"Invalid failoverQuorum configuration: spec.postgresql.synchronous.number must be greater than "+
+				"the total number of instances in spec.postgresql.synchronous.standbyNamesPre and "+
+				"spec.postgresql.synchronous.standbyNamesPost to allow automatic failover.",
 		)
 		result = append(result, err)
 	}
@@ -1131,25 +1194,25 @@ func (v *ClusterCustomValidator) validateConfiguration(r *apiv1.Cluster) field.E
 		}
 	}
 
-	walLogHintsValue, walLogHintsSet := r.Spec.PostgresConfiguration.Parameters[postgres.ParameterWalLogHints]
-	if walLogHintsSet {
-		walLogHintsActivated, err := postgres.ParsePostgresConfigBoolean(walLogHintsValue)
-		if err != nil {
-			result = append(
-				result,
-				field.Invalid(
-					field.NewPath("spec", "postgresql", "parameters", postgres.ParameterWalLogHints),
-					walLogHintsValue,
-					"invalid `wal_log_hints`. Must be a postgres boolean"))
-		}
-		if r.Spec.Instances > 1 && !walLogHintsActivated {
-			result = append(
-				result,
-				field.Invalid(
-					field.NewPath("spec", "postgresql", "parameters", postgres.ParameterWalLogHints),
-					r.Spec.PostgresConfiguration.Parameters[postgres.ParameterWalLogHints],
-					"`wal_log_hints` must be set to `on` when `instances` > 1"))
-		}
+	if _, fieldError := tryParseBooleanPostgresParameter(r, postgres.ParameterHotStandbyFeedback); fieldError != nil {
+		result = append(result, fieldError)
+	}
+
+	if _, fieldError := tryParseBooleanPostgresParameter(r, postgres.ParameterSyncReplicationSlots); fieldError != nil {
+		result = append(result, fieldError)
+	}
+
+	walLogHintsActivated, fieldError := tryParseBooleanPostgresParameter(r, postgres.ParameterWalLogHints)
+	if fieldError != nil {
+		result = append(result, fieldError)
+	}
+	if walLogHintsActivated != nil && !*walLogHintsActivated && r.Spec.Instances > 1 {
+		result = append(
+			result,
+			field.Invalid(
+				field.NewPath("spec", "postgresql", "parameters", postgres.ParameterWalLogHints),
+				r.Spec.PostgresConfiguration.Parameters[postgres.ParameterWalLogHints],
+				"`wal_log_hints` must be set to `on` when `instances` > 1"))
 	}
 
 	// verify the postgres setting min_wal_size < max_wal_size < volume size
@@ -1163,6 +1226,24 @@ func (v *ClusterCustomValidator) validateConfiguration(r *apiv1.Cluster) field.E
 	}
 
 	return result
+}
+
+// tryParseBooleanPostgresParameter attempts to parse a boolean PostgreSQL parameter
+// from the cluster specification. If the parameter is not set, it returns nil.
+func tryParseBooleanPostgresParameter(r *apiv1.Cluster, parameterName string) (*bool, *field.Error) {
+	stringValue, hasParameter := r.Spec.PostgresConfiguration.Parameters[parameterName]
+	if !hasParameter {
+		return nil, nil
+	}
+
+	value, err := postgres.ParsePostgresConfigBoolean(stringValue)
+	if err != nil {
+		return nil, field.Invalid(
+			field.NewPath("spec", "postgresql", "parameters", parameterName),
+			stringValue,
+			fmt.Sprintf("invalid `%s` value. Must be a postgres boolean", parameterName))
+	}
+	return &value, nil
 }
 
 // validateWalSizeConfiguration verifies that min_wal_size < max_wal_size < wal volume size
@@ -1286,7 +1367,7 @@ func parsePostgresQuantityValue(value string) (resource.Quantity, error) {
 func (v *ClusterCustomValidator) validateConfigurationChange(r, old *apiv1.Cluster) field.ErrorList {
 	var result field.ErrorList
 
-	if old.Spec.ImageName != r.Spec.ImageName {
+	if old.Spec.ImageName != r.Spec.ImageName && r.Spec.PrimaryUpdateMethod == apiv1.PrimaryUpdateMethodSwitchover {
 		diff := utils.CollectDifferencesFromMaps(old.Spec.PostgresConfiguration.Parameters,
 			r.Spec.PostgresConfiguration.Parameters)
 		if len(diff) > 0 {
@@ -1296,7 +1377,8 @@ func (v *ClusterCustomValidator) validateConfigurationChange(r, old *apiv1.Clust
 				field.Invalid(
 					field.NewPath("spec", "imageName"),
 					r.Spec.ImageName,
-					fmt.Sprintf("Can't change image name and configuration at the same time. "+
+					fmt.Sprintf("Can't change image name and configuration at the same time when "+
+						"`primaryUpdateMethod` is set to `switchover`. "+
 						"There are differences in PostgreSQL configuration parameters: %s", jsonDiff)))
 			return result
 		}
@@ -2163,37 +2245,114 @@ func (v *ClusterCustomValidator) validateReplicationSlots(r *apiv1.Cluster) fiel
 	return nil
 }
 
+func (v *ClusterCustomValidator) validateSynchronizeLogicalDecoding(r *apiv1.Cluster) field.ErrorList {
+	replicationSlots := r.Spec.ReplicationSlots
+	if replicationSlots.HighAvailability == nil || !replicationSlots.HighAvailability.SynchronizeLogicalDecoding {
+		return nil
+	}
+
+	if postgres.IsManagedExtensionUsed("pg_failover_slots", r.Spec.PostgresConfiguration.Parameters) {
+		return nil
+	}
+
+	pgMajor, err := r.GetPostgresqlMajorVersion()
+	if err != nil {
+		return nil
+	}
+
+	if pgMajor < 17 {
+		return field.ErrorList{
+			field.Invalid(
+				field.NewPath("spec", "replicationSlots", "highAvailability", "synchronizeLogicalDecoding"),
+				replicationSlots.HighAvailability.SynchronizeLogicalDecoding,
+				"pg_failover_slots extension must be enabled to use synchronizeLogicalDecoding with Postgres versions < 17",
+			),
+		}
+	}
+
+	result := field.ErrorList{}
+
+	hotStandbyFeedback, _ := postgres.ParsePostgresConfigBoolean(
+		r.Spec.PostgresConfiguration.Parameters[postgres.ParameterHotStandbyFeedback])
+	if !hotStandbyFeedback {
+		result = append(
+			result,
+			field.Invalid(
+				field.NewPath("spec", "postgresql", "parameters", postgres.ParameterHotStandbyFeedback),
+				hotStandbyFeedback,
+				fmt.Sprintf("`%s` must be enabled to enable "+
+					"`spec.replicationSlots.highAvailability.synchronizeLogicalDecoding`",
+					postgres.ParameterHotStandbyFeedback)))
+	}
+
+	const syncReplicationSlotsKey = "sync_replication_slots"
+	syncReplicationSlots, _ := postgres.ParsePostgresConfigBoolean(
+		r.Spec.PostgresConfiguration.Parameters[syncReplicationSlotsKey])
+	if !syncReplicationSlots {
+		result = append(
+			result,
+			field.Invalid(
+				field.NewPath("spec", "postgresql", "parameters", syncReplicationSlotsKey),
+				syncReplicationSlots,
+				fmt.Sprintf("either `%s` setting or pg_failover_slots extension must be enabled to enable "+
+					"`spec.replicationSlots.highAvailability.synchronizeLogicalDecoding`", syncReplicationSlotsKey)))
+	}
+
+	return result
+}
+
 func (v *ClusterCustomValidator) validateReplicationSlotsChange(r, old *apiv1.Cluster) field.ErrorList {
 	newReplicationSlots := r.Spec.ReplicationSlots
 	oldReplicationSlots := old.Spec.ReplicationSlots
 
-	if oldReplicationSlots == nil || oldReplicationSlots.HighAvailability == nil ||
-		!oldReplicationSlots.HighAvailability.GetEnabled() {
+	var errs field.ErrorList
+
+	if oldReplicationSlots == nil {
 		return nil
 	}
 
-	var errs field.ErrorList
-
-	// when disabling we should check that the prefix it's not removed, and it doesn't change to
-	// properly execute the cleanup logic
-	if newReplicationSlots == nil || newReplicationSlots.HighAvailability == nil {
-		path := field.NewPath("spec", "replicationSlots")
-		if newReplicationSlots != nil {
-			path = path.Child("highAvailability")
+	// Validate HighAvailability changes
+	if oldReplicationSlots.HighAvailability.GetEnabled() {
+		// When disabling, we should check that the prefix is not removed and doesn't change
+		// to properly execute the cleanup logic
+		if newReplicationSlots == nil || newReplicationSlots.HighAvailability == nil {
+			path := field.NewPath("spec", "replicationSlots")
+			if newReplicationSlots != nil {
+				path = path.Child("highAvailability")
+			}
+			errs = append(errs,
+				field.Invalid(
+					path,
+					nil,
+					fmt.Sprintf("Cannot remove %v section while highAvailability is enabled", path)),
+			)
+		} else if oldReplicationSlots.HighAvailability.SlotPrefix != newReplicationSlots.HighAvailability.SlotPrefix {
+			errs = append(errs,
+				field.Invalid(
+					field.NewPath("spec", "replicationSlots", "highAvailability", "slotPrefix"),
+					newReplicationSlots.HighAvailability.SlotPrefix,
+					"Cannot change replication slot prefix while highAvailability is enabled"),
+			)
 		}
-		errs = append(errs,
-			field.Invalid(
-				path,
-				nil,
-				fmt.Sprintf("Cannot remove %v section while highAvailability is enabled", path)),
-		)
-	} else if oldReplicationSlots.HighAvailability.SlotPrefix != newReplicationSlots.HighAvailability.SlotPrefix {
-		errs = append(errs,
-			field.Invalid(
-				field.NewPath("spec", "replicationSlots", "highAvailability", "slotPrefix"),
-				newReplicationSlots.HighAvailability.SlotPrefix,
-				"Cannot change replication slot prefix while highAvailability is enabled"),
-		)
+	}
+
+	// Validate SynchronizeReplicas changes
+	// When synchronizeReplicas is enabled, we need to ensure users disable it before removing the configuration
+	// to allow the cleanup logic to properly remove user-defined replication slots from replicas
+	if oldReplicationSlots.SynchronizeReplicas.GetEnabled() {
+		if newReplicationSlots == nil || newReplicationSlots.SynchronizeReplicas == nil {
+			path := field.NewPath("spec", "replicationSlots")
+			if newReplicationSlots != nil {
+				path = path.Child("synchronizeReplicas")
+			}
+			errs = append(errs,
+				field.Invalid(
+					path,
+					nil,
+					fmt.Sprintf("Cannot remove %v section while synchronizeReplicas is enabled. "+
+						"Disable synchronizeReplicas first to allow cleanup of user-defined replication slots on replicas", path)),
+			)
+		}
 	}
 
 	return errs
@@ -2369,38 +2528,20 @@ func (v *ClusterCustomValidator) validatePgFailoverSlots(r *apiv1.Cluster) field
 	var result field.ErrorList
 	var pgFailoverSlots postgres.ManagedExtension
 
-	for i, ext := range postgres.ManagedExtensions {
-		if ext.Name == "pg_failover_slots" {
-			pgFailoverSlots = postgres.ManagedExtensions[i]
-		}
-	}
-	if !pgFailoverSlots.IsUsed(r.Spec.PostgresConfiguration.Parameters) {
+	if !postgres.IsManagedExtensionUsed("pg_failover_slots", r.Spec.PostgresConfiguration.Parameters) {
 		return nil
 	}
 
-	const hotStandbyFeedbackKey = "hot_standby_feedback"
-	hotStandbyFeedbackActivated := false
-	hotStandbyFeedback, hasHotStandbyFeedback := r.Spec.PostgresConfiguration.Parameters[hotStandbyFeedbackKey]
-	if hasHotStandbyFeedback {
-		var err error
-		hotStandbyFeedbackActivated, err = postgres.ParsePostgresConfigBoolean(hotStandbyFeedback)
-		if err != nil {
-			result = append(
-				result,
-				field.Invalid(
-					field.NewPath("spec", "postgresql", "parameters", hotStandbyFeedbackKey),
-					hotStandbyFeedback,
-					fmt.Sprintf("invalid `%s` value. Must be a postgres boolean", hotStandbyFeedbackKey)))
-		}
-	}
-
-	if !hotStandbyFeedbackActivated {
+	hotStandbyFeedback, _ := postgres.ParsePostgresConfigBoolean(
+		r.Spec.PostgresConfiguration.Parameters[postgres.ParameterHotStandbyFeedback])
+	if !hotStandbyFeedback {
 		result = append(
 			result,
 			field.Invalid(
-				field.NewPath("spec", "postgresql", "parameters", hotStandbyFeedbackKey),
+				field.NewPath("spec", "postgresql", "parameters", postgres.ParameterHotStandbyFeedback),
 				hotStandbyFeedback,
-				fmt.Sprintf("`%s` must be enabled to use %s extension", hotStandbyFeedbackKey, pgFailoverSlots.Name)))
+				fmt.Sprintf("`%s` must be enabled to use %s extension",
+					postgres.ParameterHotStandbyFeedback, pgFailoverSlots.Name)))
 	}
 
 	if r.Spec.ReplicationSlots == nil {
@@ -2431,7 +2572,20 @@ func (v *ClusterCustomValidator) getAdmissionWarnings(r *apiv1.Cluster) admissio
 	list = append(list, getRetentionPolicyWarnings(r)...)
 	list = append(list, getStorageWarnings(r)...)
 	list = append(list, getSharedBuffersWarnings(r)...)
+	list = append(list, getMonitoringFieldsWarnings(r)...)
 	return append(list, getDeprecatedMonitoringFieldsWarnings(r)...)
+}
+
+func getMonitoringFieldsWarnings(r *apiv1.Cluster) admission.Warnings {
+	var result admission.Warnings
+
+	if r.GetMetricsQueriesTTL().Duration == 0 {
+		result = append(result,
+			"spec.monitoring.metricsQueriesTTL is explicitly set to 0; this disables automatic TTL behavior "+
+				"and can cause heavy load on the PostgreSQL server.")
+	}
+
+	return result
 }
 
 func getStorageWarnings(r *apiv1.Cluster) admission.Warnings {
@@ -2680,7 +2834,7 @@ func (v *ClusterCustomValidator) validateLivenessPingerProbe(r *apiv1.Cluster) f
 		return nil
 	}
 
-	_, err := probes.NewLivenessPingerConfigFromAnnotations(context.Background(), r.Annotations)
+	_, err := apiv1.NewLivenessPingerConfigFromAnnotations(r.Annotations)
 	if err != nil {
 		return field.ErrorList{
 			field.Invalid(
@@ -2692,4 +2846,83 @@ func (v *ClusterCustomValidator) validateLivenessPingerProbe(r *apiv1.Cluster) f
 	}
 
 	return nil
+}
+
+func (v *ClusterCustomValidator) validateExtensions(r *apiv1.Cluster) field.ErrorList {
+	ensureNotEmptyOrDuplicate := func(path *field.Path, list *stringset.Data, value string) *field.Error {
+		if value == "" {
+			return field.Invalid(
+				path,
+				value,
+				"value cannot be empty",
+			)
+		}
+
+		if list.Has(value) {
+			return field.Duplicate(
+				path,
+				value,
+			)
+		}
+		return nil
+	}
+
+	if len(r.Spec.PostgresConfiguration.Extensions) == 0 {
+		return nil
+	}
+
+	var result field.ErrorList
+
+	extensionNames := stringset.New()
+	// Track sanitized volume names (e.g., pg_ivm and pg-ivm both become pg-ivm)
+	sanitizedVolumeNames := stringset.New()
+
+	for i, v := range r.Spec.PostgresConfiguration.Extensions {
+		basePath := field.NewPath("spec", "postgresql", "extensions").Index(i)
+		if nameErr := ensureNotEmptyOrDuplicate(basePath.Child("name"), extensionNames, v.Name); nameErr != nil {
+			result = append(result, nameErr)
+			// Skip sanitization check for duplicate names to avoid redundant error reporting
+			continue
+		}
+		extensionNames.Put(v.Name)
+
+		sanitizedName := strings.ReplaceAll(v.Name, "_", "-")
+		if sanitizedVolumeNames.Has(sanitizedName) {
+			result = append(result, field.Invalid(
+				basePath.Child("name"),
+				v.Name,
+				fmt.Sprintf("extension name results in duplicate volume name %q after sanitization "+
+					"(underscores are converted to hyphens)", sanitizedName),
+			))
+		}
+		sanitizedVolumeNames.Put(sanitizedName)
+
+		controlPaths := stringset.New()
+		for j, path := range v.ExtensionControlPath {
+			if validateErr := ensureNotEmptyOrDuplicate(
+				basePath.Child("extension_control_path").Index(j),
+				controlPaths,
+				path,
+			); validateErr != nil {
+				result = append(result, validateErr)
+			}
+
+			controlPaths.Put(path)
+		}
+
+		libraryPaths := stringset.New()
+		for j, path := range v.DynamicLibraryPath {
+			if validateErr := ensureNotEmptyOrDuplicate(
+				basePath.Child("dynamic_library_path").Index(j),
+				libraryPaths,
+				path,
+			); validateErr != nil {
+				result = append(result, validateErr)
+			}
+
+			libraryPaths.Put(path)
+		}
+	}
+
+	return result
 }

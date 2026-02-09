@@ -21,53 +21,30 @@ package probes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
 )
 
 type livenessExecutor struct {
-	cli      client.Client
+	cache    *ClusterCache
 	instance *postgres.Instance
-
-	lastestKnownCluster *apiv1.Cluster
 }
 
 // NewLivenessChecker creates a new instance of the liveness probe checker
 func NewLivenessChecker(
-	cli client.Client,
 	instance *postgres.Instance,
+	cache *ClusterCache,
 ) Checker {
 	return &livenessExecutor{
-		cli:      cli,
+		cache:    cache,
 		instance: instance,
 	}
-}
-
-// tryRefreshLatestClusterWithTimeout refreshes the latest cluster definition, returns a bool indicating if the
-// operation was successful
-func (e *livenessExecutor) tryRefreshLatestClusterWithTimeout(ctx context.Context, timeout time.Duration) bool {
-	timeoutContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	var cluster apiv1.Cluster
-	err := e.cli.Get(
-		timeoutContext,
-		client.ObjectKey{Namespace: e.instance.GetNamespaceName(), Name: e.instance.GetClusterName()},
-		&cluster,
-	)
-	if err != nil {
-		return false
-	}
-
-	e.lastestKnownCluster = cluster.DeepCopy()
-	return true
 }
 
 func (e *livenessExecutor) IsHealthy(
@@ -91,18 +68,18 @@ func (e *livenessExecutor) IsHealthy(
 		return
 	}
 
-	// We set a safe context timeout of 500ms to avoid a failed request from taking
-	// more time than the minimum configurable timeout (1s) of the container's livenessProbe,
-	// which otherwise could have triggered a restart of the instance.
-	if clusterRefreshed := e.tryRefreshLatestClusterWithTimeout(ctx, 500*time.Millisecond); clusterRefreshed {
+	var cluster apiv1.Cluster
+	err := e.cache.tryGetLatestClusterWithTimeout(ctx, &cluster)
+	if err == nil {
 		// We correctly reached the API server but, as a failsafe measure, we
 		// exercise the reachability checker and leave a log message if something
 		// is not right.
-		// In this way a network configuration problem can be discovered as
+		// In this way, a network configuration problem can be discovered as
 		// quickly as possible.
-		if err := evaluateLivenessPinger(ctx, e.lastestKnownCluster.DeepCopy()); err != nil {
+		if err := evaluateLivenessPinger(ctx, cluster); err != nil {
 			contextLogger.Warning(
-				"Instance connectivity error - liveness probe failing but API server is reachable",
+				"Instance connectivity error - liveness probe succeeding because "+
+					"the API server is reachable",
 				"err",
 				err.Error(),
 			)
@@ -111,9 +88,10 @@ func (e *livenessExecutor) IsHealthy(
 		return
 	}
 
-	contextLogger = contextLogger.WithValues("apiServerReachable", false)
+	contextLogger = contextLogger.WithValues("apiServerReachable", false,
+		"apiServerErr", err.Error())
 
-	if e.lastestKnownCluster == nil {
+	if cluster.Name == "" {
 		// We were never able to download a cluster definition. This should not
 		// happen because we check the API server connectivity as soon as the
 		// instance manager starts, before starting the probe web server.
@@ -127,8 +105,7 @@ func (e *livenessExecutor) IsHealthy(
 		return
 	}
 
-	err := evaluateLivenessPinger(ctx, e.lastestKnownCluster.DeepCopy())
-	if err != nil {
+	if err = evaluateLivenessPinger(ctx, cluster); err != nil {
 		contextLogger.Error(err, "Instance connectivity error - liveness probe failing")
 		http.Error(
 			w,
@@ -138,24 +115,33 @@ func (e *livenessExecutor) IsHealthy(
 		return
 	}
 
-	contextLogger.Debug(
+	contextLogger.Trace(
 		"Instance connectivity test succeeded - liveness probe succeeding",
-		"latestKnownInstancesReportedState", e.lastestKnownCluster.Status.InstancesReportedState,
+		"latestKnownInstancesReportedState", cluster.Status.InstancesReportedState,
 	)
 	_, _ = fmt.Fprint(w, "OK")
 }
 
 func evaluateLivenessPinger(
 	ctx context.Context,
-	cluster *apiv1.Cluster,
+	cluster apiv1.Cluster,
 ) error {
 	contextLogger := log.FromContext(ctx)
 
-	cfg, err := NewLivenessPingerConfigFromAnnotations(ctx, cluster.Annotations)
-	if err != nil {
-		return err
+	var cfg *apiv1.IsolationCheckConfiguration
+	if cluster.Spec.Probes != nil && cluster.Spec.Probes.Liveness != nil {
+		cfg = cluster.Spec.Probes.Liveness.IsolationCheck
 	}
-	if !cfg.isEnabled() {
+	if cfg == nil {
+		return nil
+	}
+
+	// This should never happen given that we set a default value. Fail fast.
+	if cfg.Enabled == nil {
+		return errors.New("enabled field is not set in the liveness isolation check configuration")
+	}
+
+	if !*cfg.Enabled {
 		contextLogger.Debug("pinger config not enabled, skipping")
 		return nil
 	}
@@ -165,12 +151,12 @@ func evaluateLivenessPinger(
 		return nil
 	}
 
-	checker, err := buildInstanceReachabilityChecker(*cfg)
+	checker, err := buildInstanceReachabilityChecker(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to build instance reachability checker: %w", err)
 	}
 
-	if err := checker.ensureInstancesAreReachable(cluster); err != nil {
+	if err := checker.ensureInstancesAreReachable(&cluster); err != nil {
 		return fmt.Errorf("liveness check failed: %w", err)
 	}
 

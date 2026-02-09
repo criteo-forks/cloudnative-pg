@@ -31,16 +31,19 @@ import (
 	"strings"
 	"time"
 
+	cnpgiPostgres "github.com/cloudnative-pg/cnpg-i/pkg/postgres"
 	"github.com/cloudnative-pg/machinery/pkg/env"
 	"github.com/cloudnative-pg/machinery/pkg/execlog"
 	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/cloudnative-pg/machinery/pkg/fileutils/compatibility"
 	"github.com/cloudnative-pg/machinery/pkg/log"
+	"github.com/cloudnative-pg/machinery/pkg/stringset"
 	"github.com/spf13/cobra"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	pluginClient "github.com/cloudnative-pg/cloudnative-pg/internal/cnpi/plugin/client"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/istio"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/linkerd"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/configfile"
@@ -157,6 +160,7 @@ func (ui upgradeInfo) upgradeSubCommand(ctx context.Context, instance *postgres.
 		contextLogger.Error(err, "Error while getting cluster")
 		return err
 	}
+	instance.Cluster = &cluster
 
 	if _, err := instancecertificate.NewReconciler(client, instance).RefreshSecrets(ctx, &cluster); err != nil {
 		return fmt.Errorf("error while downloading secrets: %w", err)
@@ -404,8 +408,23 @@ func prepareConfigurationFiles(ctx context.Context, cluster apiv1.Cluster, destD
 		tmpCluster.Spec.PostgresConfiguration.Parameters["idle_replication_slot_timeout"] = "0"
 	}
 
+	enabledPluginNamesSet := stringset.From(cluster.GetJobEnabledPluginNames())
+	pluginCli, err := pluginClient.NewClient(ctx, enabledPluginNamesSet)
+	if err != nil {
+		return fmt.Errorf("error while creating the plugin client: %w", err)
+	}
+	defer pluginCli.Close(ctx)
+
+	ctx = pluginClient.SetPluginClientInContext(ctx, pluginCli)
+	ctx = cluster.SetInContext(ctx)
+
 	newInstance := postgres.Instance{PgData: destDir}
-	if _, err := newInstance.RefreshConfigurationFilesFromCluster(ctx, tmpCluster, false); err != nil {
+	if _, err := newInstance.RefreshConfigurationFilesFromCluster(
+		ctx,
+		tmpCluster,
+		false,
+		cnpgiPostgres.OperationType_TYPE_UPGRADE,
+	); err != nil {
 		return fmt.Errorf("error while creating the configuration files for new datadir %q: %w", destDir, err)
 	}
 
@@ -427,13 +446,14 @@ func prepareConfigurationFiles(ctx context.Context, cluster apiv1.Cluster, destD
 func (ui upgradeInfo) runPgUpgrade(
 	newDataDir string,
 ) error {
-	args := []string{
+	args := make([]string, 0, 9+len(ui.pgUpgradeArgs))
+	args = append(args,
 		"--link",
 		"--username", "postgres",
 		"--old-bindir", ui.oldBinDir,
 		"--old-datadir", ui.pgData,
 		"--new-datadir", newDataDir,
-	}
+	)
 	args = append(args, ui.pgUpgradeArgs...)
 
 	// Run the pg_upgrade command

@@ -14,14 +14,15 @@ Rolling upgrades are triggered when:
 
 - you change the `imageName` attribute in the cluster specification;
 
+- you change the list of extension images in the `.spec.postgresql.extensions`
+  stanza of the cluster specification;
+
 - the [image catalog](image_catalog.md) is updated with a new image for the
   major version used by the cluster;
 
 - a change in the PostgreSQL configuration requires a restart to apply;
 
 - you change the `Cluster` `.spec.resources` values;
-
-- you resize the persistent volume claim on AKS;
 
 - the operator is updated, ensuring Pods run the latest instance manager
   (unless [in-place updates are enabled](installation_upgrade.md#in-place-updates-of-the-instance-manager)).
@@ -38,7 +39,7 @@ The upgrade keeps the CloudNativePG identity, without re-cloning the
 data. Pods will be deleted and created again with the same PVCs and a new
 image, if required.
 
-During the rolling update procedure, each service endpoints move to reflect the
+During the rolling update procedure, each service's endpoint moves to reflect the
 cluster's status, so that applications can ignore the node that is being
 updated.
 
@@ -59,10 +60,22 @@ The `primaryUpdateMethod` option accepts one of the following values:
   most aligned replica as the new target primary, and shutting down the former
   primary pod.
 
+:::warning
+    When `primaryUpdateMethod` is set to `switchover`, you cannot change the
+    image name and PostgreSQL configuration parameters at the same time. The
+    operator will reject such updates with a validation error. If you need to
+    update both the image and the configuration, you must perform these changes
+    sequentially: update the image first, wait for the rolling update to
+    complete, then update the configuration (or vice versa). This restriction
+    exists because configuration changes tied to a new image version could cause
+    PostgreSQL to fail if applied to pods still running the old image during the
+    switchover process.
+:::
+
 There's no one-size-fits-all configuration for the update method, as that
 depends on several factors like the actual workload of your database, the
-requirements in terms of [RPO](before_you_start.md#rpo) and
-[RTO](before_you_start.md#rto), whether your PostgreSQL architecture is shared
+requirements in terms of [RPO](before_you_start.md#postgresql-terminology) and
+[RTO](before_you_start.md#postgresql-terminology), whether your PostgreSQL architecture is shared
 or shared nothing, and so on.
 
 Indeed, being PostgreSQL a primary/standby architecture database management
