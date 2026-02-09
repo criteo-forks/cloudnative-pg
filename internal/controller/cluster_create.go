@@ -39,7 +39,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
-	k8slices "k8s.io/utils/strings/slices"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -98,6 +97,11 @@ func (r *ClusterReconciler) createPostgresClusterObjects(ctx context.Context, cl
 	}
 
 	err = createOrPatchPodMonitor(ctx, r.Client, r.DiscoveryClient, specs.NewClusterPodMonitorManager(cluster))
+	if err != nil {
+		return err
+	}
+
+	err = r.reconcileFailoverQuorumObject(ctx, cluster)
 	if err != nil {
 		return err
 	}
@@ -613,6 +617,9 @@ func (r *ClusterReconciler) createServiceAccount(ctx context.Context, cluster *a
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
 			Name:      cluster.Name,
+			Labels: map[string]string{
+				utils.KubernetesAppManagedByLabelName: utils.ManagerName,
+			},
 		},
 	}
 	err = specs.UpdateServiceAccount(generatedPullSecretNames, serviceAccount)
@@ -787,7 +794,8 @@ func (r *ClusterReconciler) createOrPatchDefaultMetricsConfigmap(ctx context.Con
 				Name:      apiv1.DefaultMonitoringConfigMapName,
 				Namespace: cluster.Namespace,
 				Labels: map[string]string{
-					utils.WatchedLabelName: "true",
+					utils.WatchedLabelName:                "true",
+					utils.KubernetesAppManagedByLabelName: utils.ManagerName,
 				},
 			},
 			Data: map[string]string{
@@ -811,7 +819,7 @@ func (r *ClusterReconciler) createOrPatchDefaultMetricsConfigmap(ctx context.Con
 		return nil
 	}
 
-	// The configuration changed, and we need the patch the secret we have
+	// The configuration changed, and we need the patch the configMap we have
 	patchedConfigMap := targetConfigMap.DeepCopy()
 	utils.SetOperatorVersion(&patchedConfigMap.ObjectMeta, versions.Version)
 	patchedConfigMap.Data = sourceConfigmap.Data
@@ -869,20 +877,21 @@ func (r *ClusterReconciler) createOrPatchDefaultMetricsSecret(ctx context.Contex
 			return err
 		}
 		// If the secret does not exist we create it
-		newConfigMap := corev1.Secret{
+		newSecret := corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      apiv1.DefaultMonitoringSecretName,
 				Namespace: cluster.Namespace,
 				Labels: map[string]string{
-					utils.WatchedLabelName: "true",
+					utils.WatchedLabelName:                "true",
+					utils.KubernetesAppManagedByLabelName: utils.ManagerName,
 				},
 			},
 			Data: map[string][]byte{
 				apiv1.DefaultMonitoringKey: sourceSecret.Data[apiv1.DefaultMonitoringKey],
 			},
 		}
-		utils.SetOperatorVersion(&newConfigMap.ObjectMeta, versions.Version)
-		return r.Create(ctx, &newConfigMap)
+		utils.SetOperatorVersion(&newSecret.ObjectMeta, versions.Version)
+		return r.Create(ctx, &newSecret)
 	}
 
 	// We check that we own the existing configmap
@@ -977,10 +986,12 @@ func createOrPatchPodMonitor(
 		return nil
 	// Pod monitor disabled and pod monitor present - delete it
 	case !manager.IsPodMonitorEnabled() && podMonitor != nil:
-		contextLogger.Info("Deleting PodMonitor")
-		if err := cli.Delete(ctx, podMonitor); err != nil {
-			if !apierrs.IsNotFound(err) {
-				return err
+		if _, owned := IsOwnedByCluster(podMonitor); owned {
+			contextLogger.Info("Deleting PodMonitor")
+			if err := cli.Delete(ctx, podMonitor); err != nil {
+				if !apierrs.IsNotFound(err) {
+					return err
+				}
 			}
 		}
 		return nil
@@ -1233,7 +1244,7 @@ func (r *ClusterReconciler) joinReplicaInstance(
 
 	var backupList apiv1.BackupList
 	if err := r.List(ctx, &backupList,
-		client.MatchingFields{clusterName: cluster.Name},
+		client.MatchingFields{clusterNameField: cluster.Name},
 		client.InNamespace(cluster.Namespace),
 	); err != nil {
 		contextLogger.Error(err, "Error while getting backup list, when bootstrapping a new replica")
@@ -1412,7 +1423,7 @@ func findInstancePodToCreate(
 		}
 
 		instanceName := specs.GetInstanceName(cluster.Name, serial)
-		if k8slices.Contains(instanceThatHavePods, instanceName) {
+		if slices.Contains(instanceThatHavePods, instanceName) {
 			continue
 		}
 

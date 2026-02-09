@@ -111,6 +111,7 @@ func Status(
 	clusterName string,
 	verbosity int,
 	format plugin.OutputFormat,
+	timeout time.Duration,
 ) error {
 	var cluster apiv1.Cluster
 	var errs []error
@@ -134,12 +135,12 @@ func Status(
 	}
 	errs = append(errs, status.ErrorList...)
 
-	status.printBasicInfo(ctx, clientInterface)
+	status.printBasicInfo(ctx, clientInterface, timeout)
 	status.printHibernationInfo()
 	status.printDemotionTokenInfo()
 	status.printPromotionTokenInfo()
 	if verbosity > 1 {
-		errs = append(errs, status.printPostgresConfiguration(ctx, clientInterface)...)
+		errs = append(errs, status.printPostgresConfiguration(ctx, clientInterface, timeout)...)
 		status.printCertificatesStatus()
 	}
 	if !hibernated {
@@ -216,9 +217,11 @@ func listFencedInstances(fencedInstances *stringset.Data) string {
 	return strings.Join(fencedInstances.ToList(), ", ")
 }
 
-func (fullStatus *PostgresqlStatus) getClusterSize(ctx context.Context, client kubernetes.Interface) (string, error) {
-	timeout := time.Second * 10
-
+func (fullStatus *PostgresqlStatus) getClusterSize(
+	ctx context.Context,
+	client kubernetes.Interface,
+	timeout time.Duration,
+) (string, error) {
 	// Compute the disk space through `du`
 	output, _, err := utils.ExecCommand(
 		ctx,
@@ -238,10 +241,14 @@ func (fullStatus *PostgresqlStatus) getClusterSize(ctx context.Context, client k
 	return size, nil
 }
 
-func (fullStatus *PostgresqlStatus) printBasicInfo(ctx context.Context, k8sClient kubernetes.Interface) {
+func (fullStatus *PostgresqlStatus) printBasicInfo(
+	ctx context.Context,
+	k8sClient kubernetes.Interface,
+	timeout time.Duration,
+) {
 	summary := tabby.New()
 
-	clusterSize, clusterSizeErr := fullStatus.getClusterSize(ctx, k8sClient)
+	clusterSize, clusterSizeErr := fullStatus.getClusterSize(ctx, k8sClient, timeout)
 
 	cluster := fullStatus.Cluster
 
@@ -481,8 +488,8 @@ func (fullStatus *PostgresqlStatus) getStatus(cluster *apiv1.Cluster) string {
 func (fullStatus *PostgresqlStatus) printPostgresConfiguration(
 	ctx context.Context,
 	client kubernetes.Interface,
+	timeout time.Duration,
 ) []error {
-	timeout := time.Second * 10
 	var errs []error
 
 	// Read PostgreSQL configuration from custom.conf
@@ -623,8 +630,14 @@ func (fullStatus *PostgresqlStatus) printWALArchivingStatus(status *tabby.Tabby)
 		status.AddLine("No Primary instance found")
 		return
 	}
+	isWalArchivingDisabled := fullStatus.Cluster != nil &&
+		utils.IsWalArchivingDisabled(&fullStatus.Cluster.ObjectMeta)
+
 	status.AddLine("Working WAL archiving:",
-		getWalArchivingStatus(primaryInstanceStatus.IsArchivingWAL, primaryInstanceStatus.LastFailedWAL))
+		getWalArchivingStatus(
+			primaryInstanceStatus.IsArchivingWAL,
+			primaryInstanceStatus.LastFailedWAL,
+			isWalArchivingDisabled))
 	status.AddLine("WALs waiting to be archived:", primaryInstanceStatus.ReadyWALFiles)
 
 	if primaryInstanceStatus.LastArchivedWAL == "" {
@@ -641,8 +654,10 @@ func (fullStatus *PostgresqlStatus) printWALArchivingStatus(status *tabby.Tabby)
 	}
 }
 
-func getWalArchivingStatus(isArchivingWAL bool, lastFailedWAL string) string {
+func getWalArchivingStatus(isArchivingWAL bool, lastFailedWAL string, isWalArchivingDisabled bool) string {
 	switch {
+	case isWalArchivingDisabled:
+		return aurora.Yellow("Disabled").String()
 	case isArchivingWAL:
 		return aurora.Green("OK").String()
 	case lastFailedWAL != "":
@@ -1294,6 +1309,8 @@ func (fullStatus *PostgresqlStatus) printPluginStatus(verbosity int) {
 				result[idx] = "Operator Service"
 			case identity.PluginCapability_Service_TYPE_LIFECYCLE_SERVICE.String():
 				result[idx] = "Lifecycle Service"
+			case identity.PluginCapability_Service_TYPE_POSTGRES.String():
+				result[idx] = "Postgres Service"
 			case identity.PluginCapability_Service_TYPE_UNSPECIFIED.String():
 				continue
 			default:

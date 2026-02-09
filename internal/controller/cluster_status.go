@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -34,7 +35,6 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/strings/slices"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -93,17 +93,6 @@ func (resources *managedResources) noInstanceIsAlive() bool {
 		}
 	}
 	return true
-}
-
-// Retrieve a PVC by name
-func (resources *managedResources) getPVC(name string) *corev1.PersistentVolumeClaim {
-	for _, pvc := range resources.pvcs.Items {
-		if name == pvc.Name {
-			return &pvc
-		}
-	}
-
-	return nil
 }
 
 // getManagedResources get the managed resources of various types
@@ -218,29 +207,6 @@ func (r *ClusterReconciler) getManagedJobs(
 	})
 
 	return childJobs, nil
-}
-
-// Set the PvcStatusAnnotation to Ready for a PVC
-func (r *ClusterReconciler) setPVCStatusReady(
-	ctx context.Context,
-	pvc *corev1.PersistentVolumeClaim,
-) error {
-	contextLogger := log.FromContext(ctx)
-
-	if pvc.Annotations[utils.PVCStatusAnnotationName] == persistentvolumeclaim.StatusReady {
-		return nil
-	}
-
-	contextLogger.Trace("Marking PVC as ready", "pvcName", pvc.Name)
-
-	oldPvc := pvc.DeepCopy()
-
-	if pvc.Annotations == nil {
-		pvc.Annotations = make(map[string]string, 1)
-	}
-	pvc.Annotations[utils.PVCStatusAnnotationName] = persistentvolumeclaim.StatusReady
-
-	return r.Patch(ctx, pvc, client.MergeFrom(oldPvc))
 }
 
 func (r *ClusterReconciler) updateResourceStatus(
@@ -859,7 +825,21 @@ func isWALSpaceAvailableOnPod(pod *corev1.Pod) bool {
 	isTerminatedForMissingWALDiskSpace := func(state *corev1.ContainerState) bool {
 		return state.Terminated != nil && state.Terminated.ExitCode == apiv1.MissingWALDiskSpaceExitCode
 	}
+	// Return true if WAL space IS available (i.e., NOT terminated for missing disk space)
+	return !hasPostgresContainerTerminationReason(pod, isTerminatedForMissingWALDiskSpace)
+}
 
+// isTerminatedBecauseOfMissingWALArchivePlugin check if a Pod terminated because the
+// WAL archiving plugin was missing when the Pod started
+func isTerminatedBecauseOfMissingWALArchivePlugin(pod *corev1.Pod) bool {
+	isTerminatedForMissingWALArchivePlugin := func(state *corev1.ContainerState) bool {
+		return state.Terminated != nil && state.Terminated.ExitCode == apiv1.MissingWALArchivePlugin
+	}
+	// Return true if the pod IS terminated because of missing WAL archive plugin
+	return hasPostgresContainerTerminationReason(pod, isTerminatedForMissingWALArchivePlugin)
+}
+
+func hasPostgresContainerTerminationReason(pod *corev1.Pod, reason func(state *corev1.ContainerState) bool) bool {
 	var pgContainerStatus *corev1.ContainerStatus
 	for i := range pod.Status.ContainerStatuses {
 		status := pod.Status.ContainerStatuses[i]
@@ -872,21 +852,20 @@ func isWALSpaceAvailableOnPod(pod *corev1.Pod) bool {
 	// This is not an instance Pod as there's no PostgreSQL
 	// container
 	if pgContainerStatus == nil {
+		return false
+	}
+
+	// If the Pod was terminated with the specified reason,
+	// then return true
+	if reason(&pgContainerStatus.State) {
 		return true
 	}
 
-	// If the Pod was terminated because it didn't have enough disk
-	// space, then we have no disk space
-	if isTerminatedForMissingWALDiskSpace(&pgContainerStatus.State) {
-		return false
+	// The container is not ready and was last terminated with the specified reason.
+	// Return true to indicate the termination reason was found
+	if !pgContainerStatus.Ready && reason(&pgContainerStatus.LastTerminationState) {
+		return true
 	}
 
-	// The Pod is now running but not still ready, and last time it
-	// was terminated for missing disk space. Let's wait for it
-	// to be ready before classifying it as having enough disk space
-	if !pgContainerStatus.Ready && isTerminatedForMissingWALDiskSpace(&pgContainerStatus.LastTerminationState) {
-		return false
-	}
-
-	return true
+	return false
 }

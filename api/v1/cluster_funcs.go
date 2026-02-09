@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudnative-pg/cnpg-i/pkg/identity"
 	"github.com/cloudnative-pg/machinery/pkg/image/reference"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	pgTime "github.com/cloudnative-pg/machinery/pkg/postgres/time"
@@ -84,6 +85,50 @@ func GetPluginConfigurationEnabledPluginNames(pluginList []PluginConfiguration) 
 		}
 	}
 	return pluginNames
+}
+
+// GetInstanceEnabledPluginNames gets the name of the plugins that are available to the instance container
+func (cluster *Cluster) GetInstanceEnabledPluginNames() (result []string) {
+	var instance []string
+	for _, pluginStatus := range cluster.Status.PluginStatus {
+		if slices.Contains(pluginStatus.Capabilities,
+			identity.PluginCapability_Service_TYPE_INSTANCE_SIDECAR_INJECTION.String()) {
+			instance = append(instance, pluginStatus.Name)
+		}
+	}
+
+	enabled := GetPluginConfigurationEnabledPluginNames(cluster.Spec.Plugins)
+
+	var instanceEnabled []string
+	for _, pluginName := range instance {
+		if slices.Contains(enabled, pluginName) {
+			instanceEnabled = append(instanceEnabled, pluginName)
+		}
+	}
+
+	return instanceEnabled
+}
+
+// GetJobEnabledPluginNames gets the name of the plugins that are available to the job container
+func (cluster *Cluster) GetJobEnabledPluginNames() (result []string) {
+	var instance []string
+	for _, pluginStatus := range cluster.Status.PluginStatus {
+		if slices.Contains(pluginStatus.Capabilities,
+			identity.PluginCapability_Service_TYPE_INSTANCE_JOB_SIDECAR_INJECTION.String()) {
+			instance = append(instance, pluginStatus.Name)
+		}
+	}
+
+	enabled := GetPluginConfigurationEnabledPluginNames(cluster.Spec.Plugins)
+
+	var instanceEnabled []string
+	for _, pluginName := range instance {
+		if slices.Contains(enabled, pluginName) {
+			instanceEnabled = append(instanceEnabled, pluginName)
+		}
+	}
+
+	return instanceEnabled
 }
 
 // GetExternalClustersEnabledPluginNames gets the name of the plugins that are
@@ -1139,6 +1184,19 @@ func (cluster *Cluster) IsMetricsTLSEnabled() bool {
 	return false
 }
 
+// GetMetricsQueriesTTL returns the Time To Live of the metrics computed from
+// queries. Once exceeded, a scrape of the metric will trigger a rerun of the queries.
+// Default value is 30 seconds
+func (cluster *Cluster) GetMetricsQueriesTTL() metav1.Duration {
+	if cluster.Spec.Monitoring != nil && cluster.Spec.Monitoring.MetricsQueriesTTL != nil {
+		return *cluster.Spec.Monitoring.MetricsQueriesTTL
+	}
+
+	return metav1.Duration{
+		Duration: 30 * time.Second,
+	}
+}
+
 // GetEnableSuperuserAccess returns if the superuser access is enabled or not
 func (cluster *Cluster) GetEnableSuperuserAccess() bool {
 	if cluster.Spec.EnableSuperuserAccess != nil {
@@ -1504,4 +1562,14 @@ func (cluster *Cluster) GetEnabledWALArchivePluginName() string {
 	}
 
 	return ""
+}
+
+// IsFailoverQuorumActive check if we should enable the
+// quorum failover protection alpha-feature.
+func (cluster *Cluster) IsFailoverQuorumActive() bool {
+	if cluster.Spec.PostgresConfiguration.Synchronous == nil {
+		return false
+	}
+
+	return cluster.Spec.PostgresConfiguration.Synchronous.FailoverQuorum
 }

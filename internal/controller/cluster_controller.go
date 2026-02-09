@@ -145,6 +145,8 @@ var ErrNextLoop = utils.ErrNextLoop
 // +kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;create;watch;list;patch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=imagecatalogs,verbs=get;watch;list
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusterimagecatalogs,verbs=get;watch;list
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=failoverquorums,verbs=create;get;watch;delete;list
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=failoverquorums/status,verbs=get;patch;update;watch
 
 // Reconcile is the operator reconcile loop
 func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -160,7 +162,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
-	if cluster == nil {
+	if cluster == nil || cluster.GetDeletionTimestamp() != nil {
 		if err := r.deleteDanglingMonitoringQueries(ctx, req.Namespace); err != nil {
 			contextLogger.Error(
 				err,
@@ -168,16 +170,27 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				"configMapName", apiv1.DefaultMonitoringConfigMapName,
 				"namespace", req.Namespace,
 			)
+			return ctrl.Result{}, err
 		}
 		if err := r.notifyDeletionToOwnedResources(ctx, req.NamespacedName); err != nil {
+			// Optimistic locking conflict is transient - requeue to retry
+			if apierrs.IsConflict(err) {
+				contextLogger.Info(
+					"Optimistic locking conflict while removing finalizers, requeueing",
+					"clusterName", req.Name,
+					"namespace", req.Namespace,
+				)
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			}
 			contextLogger.Error(
 				err,
 				"error while deleting finalizers of objects on the cluster",
 				"clusterName", req.Name,
 				"namespace", req.Namespace,
 			)
+			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, nil
 	}
 
 	ctx = cluster.SetInContext(ctx)
@@ -208,6 +221,15 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				)
 		}
 
+		if regErr := r.RegisterPhase(
+			ctx,
+			cluster,
+			apiv1.PhaseFailurePlugin,
+			fmt.Sprintf("Error while discovering plugins: %s", err.Error()),
+		); regErr != nil {
+			contextLogger.Error(regErr, "unable to register phase", "outerErr", err.Error())
+		}
+
 		contextLogger.Error(err, "Error loading plugins, retrying")
 		return ctrl.Result{}, err
 	}
@@ -225,6 +247,21 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if errors.Is(err, utils.ErrTerminateLoop) {
 		return ctrl.Result{}, nil
 	}
+
+	// This code assumes that we always end the reconciliation loop if we encounter an error.
+	// In case that the assumption is false this code could overwrite an error phase.
+	if cnpgiClient.ContainsPluginError(err) {
+		if regErr := r.RegisterPhase(
+			ctx,
+			cluster,
+			apiv1.PhaseFailurePlugin,
+			fmt.Sprintf("Encountered an error while interacting with plugins: %s", err.Error()),
+		); regErr != nil {
+			contextLogger.Error(regErr, "unable to register phase", "outerErr", err.Error())
+		}
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -437,6 +474,10 @@ func (r *ClusterReconciler) reconcile(ctx context.Context, cluster *apiv1.Cluste
 		return res, err
 	}
 
+	if res, err := r.requireWALArchivingPluginOrDelete(ctx, instancesStatus); err != nil || !res.IsZero() {
+		return res, err
+	}
+
 	if res, err := replicaclusterswitch.Reconcile(
 		ctx, r.Client, cluster, r.InstanceClient, instancesStatus); res != nil || err != nil {
 		if res != nil {
@@ -571,6 +612,30 @@ func (r *ClusterReconciler) ensureNoFailoverOnFullDisk(
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+}
+
+func (r *ClusterReconciler) requireWALArchivingPluginOrDelete(
+	ctx context.Context,
+	instances postgres.PostgresqlStatusList,
+) (ctrl.Result, error) {
+	contextLogger := log.FromContext(ctx).WithName("require_wal_archiving_plugin_delete")
+
+	for _, state := range instances.Items {
+		if isTerminatedBecauseOfMissingWALArchivePlugin(state.Pod) {
+			contextLogger.Warning(
+				"Detected instance manager initialization procedure that failed "+
+					"because the required WAL archive plugin is missing. Deleting it to trigger rollout",
+				"targetPod", state.Pod.Name)
+			if err := r.Delete(ctx, state.Pod); err != nil {
+				contextLogger.Error(err, "Cannot delete the pod", "pod", state.Pod.Name)
+				return ctrl.Result{}, err
+			}
+
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+	}
+
+	return ctrl.Result{}, nil
 }
 
 func (r *ClusterReconciler) handleSwitchover(
@@ -907,15 +972,20 @@ func (r *ClusterReconciler) reconcilePods(
 ) (ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
-	if err := r.markPVCReadyForCompletedJobs(ctx, resources); err != nil {
+	if err := persistentvolumeclaim.MarkPVCReadyForCompletedJobs(
+		ctx,
+		r.Client,
+		resources.pvcs.Items,
+		resources.jobs.Items,
+	); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if res, err := r.ensureInstancesAreCreated(ctx, cluster, resources, instancesStatus); !res.IsZero() || err != nil {
+	if res, err := r.ensureInstancesAreCreated(ctx, cluster, resources, instancesStatus); err != nil || !res.IsZero() {
 		return res, err
 	}
 
-	if err := r.ensureHealthyPVCsAnnotation(ctx, cluster, resources); err != nil {
+	if err := persistentvolumeclaim.EnsureHealthyPVCsAnnotation(ctx, r.Client, cluster, resources.pvcs.Items); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -954,6 +1024,11 @@ func (r *ClusterReconciler) reconcilePods(
 	}
 
 	// Are there nodes to be removed? Remove one of them
+	if res, err := r.reconcileUnrecoverableInstances(ctx, cluster, resources); !res.IsZero() || err != nil {
+		return res, err
+	}
+
+	// Should we scale down the cluster?
 	if cluster.Status.Instances > cluster.Spec.Instances {
 		if err := r.scaleDownCluster(ctx, cluster, resources); err != nil {
 			return ctrl.Result{}, fmt.Errorf("cannot scale down cluster: %w", err)
@@ -1008,38 +1083,6 @@ func (r *ClusterReconciler) reconcilePods(
 	}
 
 	return r.handleRollingUpdate(ctx, cluster, instancesStatus)
-}
-
-func (r *ClusterReconciler) ensureHealthyPVCsAnnotation(
-	ctx context.Context,
-	cluster *apiv1.Cluster,
-	resources *managedResources,
-) error {
-	contextLogger := log.FromContext(ctx)
-
-	// Make sure that all healthy PVCs are marked as ready
-	for _, pvcName := range cluster.Status.HealthyPVC {
-		pvc := resources.getPVC(pvcName)
-		if pvc == nil {
-			return fmt.Errorf(
-				"could not find the pvc: %s, from the list of managed pvc",
-				pvcName,
-			)
-		}
-
-		if pvc.Annotations[utils.PVCStatusAnnotationName] == persistentvolumeclaim.StatusReady {
-			continue
-		}
-
-		contextLogger.Info("PVC is already attached to the pod, marking it as ready",
-			"pvc", pvc.Name)
-		if err := r.setPVCStatusReady(ctx, pvc); err != nil {
-			contextLogger.Error(err, "can't update PVC annotation as ready")
-			return err
-		}
-	}
-
-	return nil
 }
 
 func (r *ClusterReconciler) handleRollingUpdate(
@@ -1471,43 +1514,4 @@ func (r *ClusterReconciler) mapNodeToClusters() handler.MapFunc {
 		}
 		return requests
 	}
-}
-
-func (r *ClusterReconciler) markPVCReadyForCompletedJobs(
-	ctx context.Context,
-	resources *managedResources,
-) error {
-	contextLogger := log.FromContext(ctx)
-
-	completeJobs := utils.FilterJobsWithOneCompletion(resources.jobs.Items)
-	if len(completeJobs) == 0 {
-		return nil
-	}
-
-	for _, job := range completeJobs {
-		for _, pvc := range resources.pvcs.Items {
-			if !persistentvolumeclaim.IsUsedByPodSpec(job.Spec.Template.Spec, pvc.Name) {
-				continue
-			}
-
-			if pvc.Annotations[utils.PVCStatusAnnotationName] == persistentvolumeclaim.StatusReady {
-				continue
-			}
-
-			roleName := job.Spec.Template.Labels[utils.JobRoleLabelName]
-			contextLogger.Info(
-				"The job finished, setting PVC as ready",
-				"pvcName", pvc.Name,
-				"role", roleName,
-				"jobName", job.Name,
-			)
-
-			if err := r.setPVCStatusReady(ctx, &pvc); err != nil {
-				contextLogger.Error(err, "unable to annotate PVC as ready")
-				return err
-			}
-		}
-	}
-
-	return nil
 }

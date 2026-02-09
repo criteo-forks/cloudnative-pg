@@ -1,3 +1,4 @@
+# Create a tag when a PR on a release/v* branch is merged
 name: release-tag
 
 on:
@@ -18,10 +19,10 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       -
         name: Create tag
-        if: github.event.pull_request.merged == true && startsWith(github.head_ref, 'release-')
+        if: github.event.pull_request.merged == true && startsWith(github.head_ref, 'release/v')
         uses: christophebedard/tag-version-commit@57ffb155fc61c8ab098fcfa273469b532c1d4ce7 # v1.7.0
         with:
           token: ${{ secrets.REPO_GHA_PAT }}

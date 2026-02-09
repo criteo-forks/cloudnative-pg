@@ -55,19 +55,19 @@ title = "CloudNativePG Operator"
 description = "This Docker image contains CloudNativePG Operator."
 authors = "The CloudNativePG Contributors"
 url = "https://github.com/cloudnative-pg/cloudnative-pg"
-documentation = "https://cloudnative-pg.io/documentation/current/"
+documentation = "https://cloudnative-pg.io/docs/"
 license = "Apache-2.0"
 now = timestamp()
 
 distros = {
   distroless = {
     # renovate: datasource=docker
-    baseImage = "gcr.io/distroless/static-debian12:nonroot@sha256:e8a4044e0b4ae4257efa45fc026c0bc30ad320d43bd4c1a7d5271bd241e386d0",
+    baseImage = "gcr.io/distroless/static-debian12:nonroot@sha256:cba10d7abd3e203428e86f5b2d7fd5eb7d8987c387864ae4996cf97191b33764",
     tag = ""
   }
   ubi = {
     # renovate: datasource=docker
-    baseImage = "registry.access.redhat.com/ubi9/ubi-micro:latest@sha256:e14a8cbcaa0c26b77140ac85d40a47b5e910a4068686b02ebcad72126e9b5f86",
+    baseImage = "registry.access.redhat.com/ubi9/ubi-micro:latest@sha256:e9765516d74cafded50d8ef593331eeca2ef6eababdda118e5297898d99b7433",
     tag = "-ubi9"
   }
 }

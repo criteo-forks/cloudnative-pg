@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1
 
 import (
+	"errors"
 	"time"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
@@ -34,6 +35,14 @@ import (
 )
 
 var _ = Describe("BackupStatus structure", func() {
+	It("can be set as pending", func() {
+		status := BackupStatus{}
+		status.SetAsPending()
+		Expect(status.Phase).To(BeEquivalentTo(BackupPhasePending))
+		Expect(status.IsInProgress()).To(BeTrue())
+		Expect(status.IsDone()).To(BeFalse())
+	})
+
 	It("can be set as started", func() {
 		status := BackupStatus{}
 		pod := corev1.Pod{
@@ -49,12 +58,43 @@ var _ = Describe("BackupStatus structure", func() {
 			},
 		}
 
-		status.SetAsStarted(pod.Name, pod.Status.ContainerStatuses[0].ContainerID, BackupMethodBarmanObjectStore)
+		status.SetAsStarted(pod.Name, pod.Status.ContainerStatuses[0].ContainerID,
+			"test-session-id", BackupMethodBarmanObjectStore)
 		Expect(status.Phase).To(BeEquivalentTo(BackupPhaseStarted))
 		Expect(status.InstanceID).ToNot(BeNil())
 		Expect(status.InstanceID.PodName).To(Equal("cluster-example-1"))
 		Expect(status.InstanceID.ContainerID).To(Equal("container-id"))
+		Expect(status.InstanceID.SessionID).To(Equal("test-session-id"))
 		Expect(status.IsDone()).To(BeFalse())
+		Expect(status.ReconciliationStartedAt).ToNot(BeNil())
+	})
+
+	It("can be set as completed", func() {
+		status := BackupStatus{}
+		status.SetAsCompleted()
+		Expect(status.Phase).To(BeEquivalentTo(BackupPhaseCompleted))
+		Expect(status.Error).To(BeEmpty())
+		Expect(status.ReconciliationTerminatedAt).ToNot(BeNil())
+		Expect(status.IsDone()).To(BeTrue())
+	})
+
+	It("can be set as failed with error", func() {
+		status := BackupStatus{}
+		testErr := errors.New("test error")
+		status.SetAsFailed(testErr)
+		Expect(status.Phase).To(BeEquivalentTo(BackupPhaseFailed))
+		Expect(status.Error).To(Equal("test error"))
+		Expect(status.ReconciliationTerminatedAt).ToNot(BeNil())
+		Expect(status.IsDone()).To(BeTrue())
+	})
+
+	It("can be set as failed without error", func() {
+		status := BackupStatus{}
+		status.SetAsFailed(nil)
+		Expect(status.Phase).To(BeEquivalentTo(BackupPhaseFailed))
+		Expect(status.Error).To(BeEmpty())
+		Expect(status.ReconciliationTerminatedAt).ToNot(BeNil())
+		Expect(status.IsDone()).To(BeTrue())
 	})
 
 	It("can be set to contain a snapshot list", func() {

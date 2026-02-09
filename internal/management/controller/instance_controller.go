@@ -30,20 +30,22 @@ import (
 	"strconv"
 	"time"
 
+	postgresClient "github.com/cloudnative-pg/cnpg-i/pkg/postgres"
 	"github.com/cloudnative-pg/machinery/pkg/fileutils"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	pgTime "github.com/cloudnative-pg/machinery/pkg/postgres/time"
+	"github.com/cloudnative-pg/machinery/pkg/stringset"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	cnpgiclient "github.com/cloudnative-pg/cloudnative-pg/internal/cnpi/plugin/client"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/controller"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/controller/roles"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/management/controller/slots/reconciler"
@@ -116,8 +118,26 @@ func (r *InstanceReconciler) Reconcile(
 		return reconcile.Result{}, fmt.Errorf("could not fetch Cluster: %w", err)
 	}
 
-	// Print the Cluster
 	contextLogger.Debug("Reconciling Cluster")
+
+	pluginLoadingContext, cancelPluginLoading := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelPluginLoading()
+
+	pluginClient, err := cnpgiclient.WithPlugins(
+		pluginLoadingContext,
+		r.pluginRepository,
+		cluster.GetInstanceEnabledPluginNames()...,
+	)
+	if err != nil {
+		contextLogger.Error(err, "Error loading plugins, retrying")
+		return ctrl.Result{}, err
+	}
+	defer func() {
+		pluginClient.Close(ctx)
+	}()
+
+	ctx = cnpgiclient.SetPluginClientInContext(ctx, pluginClient)
+	ctx = cluster.SetInContext(ctx)
 
 	// Reconcile PostgreSQL instance parameters
 	r.reconcileInstance(cluster)
@@ -131,7 +151,7 @@ func (r *InstanceReconciler) Reconcile(
 	requeueOnMissingPermissions := r.updateCacheFromCluster(ctx, cluster)
 
 	// Reconcile monitoring section
-	r.reconcileMetrics(cluster)
+	r.reconcileMetrics(ctx, cluster)
 	r.reconcileMonitoringQueries(ctx, cluster)
 
 	// Verify that the promotion token is usable before changing the archive mode and triggering restarts
@@ -232,12 +252,28 @@ func (r *InstanceReconciler) Reconcile(
 
 	if reloadNeeded && !restarted {
 		contextLogger.Info("reloading the instance")
+
+		// IMPORTANT
+		//
+		// We are unsure of the state of the PostgreSQL configuration
+		// meanwhile a new configuration is applied.
+		//
+		// For this reason, before applying a new configuration we
+		// reset the FailoverQuorum object - de facto preventing any failover -
+		// and we update it after.
+		if err = r.resetFailoverQuorumObject(ctx, cluster); err != nil {
+			return reconcile.Result{}, err
+		}
 		if err = r.instance.Reload(ctx); err != nil {
 			return reconcile.Result{}, fmt.Errorf("while reloading the instance: %w", err)
 		}
 		if err = r.processConfigReloadAndManageRestart(ctx, cluster); err != nil {
 			return reconcile.Result{}, fmt.Errorf("cannot apply new PostgreSQL configuration: %w", err)
 		}
+	}
+
+	if err = r.updateFailoverQuorumObject(ctx, cluster); err != nil {
+		return reconcile.Result{}, err
 	}
 
 	// IMPORTANT
@@ -279,6 +315,10 @@ func (r *InstanceReconciler) Reconcile(
 
 	if err := r.reconcileDatabases(ctx, cluster); err != nil {
 		return reconcile.Result{}, fmt.Errorf("cannot reconcile database configurations: %w", err)
+	}
+
+	if err := r.reconcilePgbouncerAuthUser(ctx, postgresDB, cluster); err != nil {
+		return reconcile.Result{}, fmt.Errorf("cannot reconcile pgbouncer integration: %w", err)
 	}
 
 	// Reconcile postgresql.auto.conf file permissions (< PG 17)
@@ -361,9 +401,17 @@ func (r *InstanceReconciler) refreshConfigurationFiles(
 	}
 	reloadNeeded = reloadNeeded || reloadIdent
 
+	reloadImages := r.requiresImagesRollout(ctx, cluster)
+	reloadNeeded = reloadNeeded || reloadImages
+
 	// Reconcile PostgreSQL configuration
 	// This doesn't need the PG connection, but it needs to reload it in case of changes
-	reloadConfig, err := r.instance.RefreshConfigurationFilesFromCluster(ctx, cluster, false)
+	reloadConfig, err := r.instance.RefreshConfigurationFilesFromCluster(
+		ctx,
+		cluster,
+		false,
+		postgresClient.OperationType_TYPE_RECONCILE,
+	)
 	if err != nil {
 		return false, err
 	}
@@ -375,6 +423,40 @@ func (r *InstanceReconciler) refreshConfigurationFiles(
 	}
 	reloadNeeded = reloadNeeded || reloadReplicaConfig
 	return reloadNeeded, nil
+}
+
+func (r *InstanceReconciler) requiresImagesRollout(ctx context.Context, cluster *apiv1.Cluster) bool {
+	contextLogger := log.FromContext(ctx)
+
+	latestImages := stringset.New()
+	latestImages.Put(cluster.Spec.ImageName)
+	for _, extension := range cluster.Spec.PostgresConfiguration.Extensions {
+		latestImages.Put(extension.ImageVolumeSource.Reference)
+	}
+
+	if r.runningImages == nil {
+		r.runningImages = latestImages
+		contextLogger.Info("Detected running images", "runningImages", r.runningImages.ToSortedList())
+
+		return false
+	}
+
+	contextLogger.Trace(
+		"Calculated image requirements",
+		"latestImages", latestImages.ToSortedList(),
+		"runningImages", r.runningImages.ToSortedList())
+
+	if latestImages.Eq(r.runningImages) {
+		return false
+	}
+
+	contextLogger.Info(
+		"Detected drift between the bootstrap images and the configuration. Skipping configuration reload",
+		"runningImages", r.runningImages.ToSortedList(),
+		"latestImages", latestImages.ToSortedList(),
+	)
+
+	return true
 }
 
 func (r *InstanceReconciler) reconcileFencing(ctx context.Context, cluster *apiv1.Cluster) *reconcile.Result {
@@ -581,10 +663,6 @@ func (r *InstanceReconciler) reconcileDatabases(ctx context.Context, cluster *ap
 					fmt.Errorf("could not reconcile extensions for database %s: %w", databaseName, err))
 			}
 		}
-		if err = r.reconcilePoolers(ctx, db, databaseName, cluster.Status.PoolerIntegrations); err != nil {
-			errors = append(errors,
-				fmt.Errorf("could not reconcile extensions for database %s: %w", databaseName, err))
-		}
 	}
 	if errors != nil {
 		return fmt.Errorf("got errors while reconciling databases: %v", errors)
@@ -671,13 +749,29 @@ func (r *InstanceReconciler) reconcileExtensions(
 
 // ReconcileExtensions reconciles the expected extensions for this
 // PostgreSQL instance
-func (r *InstanceReconciler) reconcilePoolers(
-	ctx context.Context, db *sql.DB, dbName string, integrations *apiv1.PoolerIntegrations,
-) (err error) {
-	if integrations == nil || len(integrations.PgBouncerIntegration.Secrets) == 0 {
-		return err
+func (r *InstanceReconciler) reconcilePgbouncerAuthUser(
+	ctx context.Context,
+	db *sql.DB,
+	cluster *apiv1.Cluster,
+) error {
+	// This need to be executed only against the primary node
+	ok, err := r.instance.IsPrimary()
+	if err != nil {
+		return fmt.Errorf("unable to check if instance is primary: %w", err)
+	}
+	if !ok {
+		return nil
 	}
 
+	// If there is no integrated pgbouncer, we directly skip the
+	// integration.
+	integrations := cluster.Status.PoolerIntegrations
+	if integrations == nil || len(integrations.PgBouncerIntegration.Secrets) == 0 {
+		return nil
+	}
+
+	// Otherwise, we need to ensure that both the role and the
+	// auth_query function are present in the superuser database.
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -699,7 +793,9 @@ func (r *InstanceReconciler) reconcilePoolers(
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", dbName, apiv1.PGBouncerPoolerUserName))
+
+		_, err = tx.Exec(fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s",
+			apiv1.PoolerAuthDBName, apiv1.PGBouncerPoolerUserName))
 		if err != nil {
 			return err
 		}
@@ -768,8 +864,10 @@ func (r *InstanceReconciler) reconcileClusterRoleWithoutDB(
 	return false, nil
 }
 
-// reconcileMetrics updates any required metrics
+// reconcileMetrics updates the prometheus metrics that deal with instance
+// manager or cluster data: manual_switchover_required, sync_replicas, replica_mode
 func (r *InstanceReconciler) reconcileMetrics(
+	ctx context.Context,
 	cluster *apiv1.Cluster,
 ) {
 	exporter := r.metricsServerExporter
@@ -786,7 +884,7 @@ func (r *InstanceReconciler) reconcileMetrics(
 	exporter.Metrics.SyncReplicas.WithLabelValues("min").Set(float64(cluster.Spec.MinSyncReplicas))
 	exporter.Metrics.SyncReplicas.WithLabelValues("max").Set(float64(cluster.Spec.MaxSyncReplicas))
 
-	syncReplicas := replication.GetExpectedSyncReplicasNumber(cluster)
+	syncReplicas := replication.GetExpectedSyncReplicasNumber(ctx, cluster)
 	exporter.Metrics.SyncReplicas.WithLabelValues("expected").Set(float64(syncReplicas))
 
 	if cluster.IsReplica() {
@@ -896,8 +994,13 @@ func (r *InstanceReconciler) reconcileInstance(cluster *apiv1.Cluster) {
 			return false
 		}
 
-		isPrimary, _ := r.instance.IsPrimary()
-		return isPrimary
+		// Check if this pod was the primary before the transition started.
+		// We use CurrentPrimary instead of IsPrimary() because IsPrimary()
+		// checks for the absence of standby.signal, which gets created during
+		// the transition by RefreshReplicaConfiguration(). Using CurrentPrimary
+		// keeps the sentinel true throughout the transition, allowing retries
+		// if the status update fails due to optimistic locking conflicts.
+		return cluster.Status.CurrentPrimary == r.instance.GetPodName()
 	}
 
 	r.instance.PgCtlTimeoutForPromotion = cluster.GetPgCtlTimeoutForPromotion()
@@ -905,6 +1008,7 @@ func (r *InstanceReconciler) reconcileInstance(cluster *apiv1.Cluster) {
 	r.instance.MaxStopDelay = cluster.GetMaxStopDelay()
 	r.instance.SmartStopDelay = cluster.GetSmartShutdownTimeout()
 	r.instance.RequiresDesignatedPrimaryTransition = detectRequiresDesignatedPrimaryTransition()
+	r.instance.Cluster = cluster
 }
 
 // PostgreSQLAutoConfWritable reconciles the permissions bit of `postgresql.auto.conf`
@@ -1113,7 +1217,8 @@ func (r *InstanceReconciler) reconcileDesignatedPrimary(
 	cluster *apiv1.Cluster,
 ) (changed bool, err error) {
 	// If I'm already the current designated primary everything is ok.
-	if cluster.Status.CurrentPrimary == r.instance.GetPodName() && !r.instance.RequiresDesignatedPrimaryTransition {
+	if cluster.Status.CurrentPrimary == r.instance.GetPodName() &&
+		!r.instance.RequiresDesignatedPrimaryTransition {
 		return false, nil
 	}
 
@@ -1126,25 +1231,17 @@ func (r *InstanceReconciler) reconcileDesignatedPrimary(
 	// I'm the primary, need to inform the operator
 	log.FromContext(ctx).Info("Setting myself as the current designated primary")
 
-	return changed, retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		var livingCluster apiv1.Cluster
+	cluster.Status.CurrentPrimary = r.instance.GetPodName()
+	cluster.Status.CurrentPrimaryTimestamp = pgTime.GetCurrentTimestamp()
+	if r.instance.RequiresDesignatedPrimaryTransition {
+		externalcluster.SetDesignatedPrimaryTransitionCompleted(cluster)
+	}
 
-		err := r.client.Get(ctx, client.ObjectKeyFromObject(cluster), &livingCluster)
-		if err != nil {
-			return err
-		}
+	if err := r.client.Status().Update(ctx, cluster); err != nil {
+		return changed, err
+	}
 
-		updatedCluster := livingCluster.DeepCopy()
-		updatedCluster.Status.CurrentPrimary = r.instance.GetPodName()
-		updatedCluster.Status.CurrentPrimaryTimestamp = pgTime.GetCurrentTimestamp()
-		if r.instance.RequiresDesignatedPrimaryTransition {
-			externalcluster.SetDesignatedPrimaryTransitionCompleted(updatedCluster)
-		}
-
-		cluster.Status = updatedCluster.Status
-
-		return r.client.Status().Update(ctx, updatedCluster)
-	})
+	return changed, nil
 }
 
 // waitForWalReceiverDown wait until the wal receiver is down, and it's used

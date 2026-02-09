@@ -77,6 +77,13 @@ ROOT_DIR=$(realpath "$(dirname "$0")/../../")
 # we need to export ENVs defined in the workflow and used in run-e2e.sh script
 export POSTGRES_IMG=${POSTGRES_IMG:-$(grep 'DefaultImageName.*=' "${ROOT_DIR}/pkg/versions/versions.go" | cut -f 2 -d \")}
 export PGBOUNCER_IMG=${PGBOUNCER_IMG:-$(grep 'DefaultPgbouncerImage.*=' "${ROOT_DIR}/pkg/versions/versions.go" | cut -f 2 -d \")}
+
+# Override pgbouncer image repository if PGBOUNCER_IMG_REPOSITORY is set
+if [ -n "${PGBOUNCER_IMG_REPOSITORY:-}" ]; then
+  PGBOUNCER_VERSION=$(echo "${PGBOUNCER_IMG}" | cut -d: -f2)
+  PGBOUNCER_IMG="${PGBOUNCER_IMG_REPOSITORY}:${PGBOUNCER_VERSION}"
+fi
+
 export E2E_PRE_ROLLING_UPDATE_IMG=${E2E_PRE_ROLLING_UPDATE_IMG:-${POSTGRES_IMG%.*}}
 export E2E_DEFAULT_STORAGE_CLASS=${E2E_DEFAULT_STORAGE_CLASS:-standard}
 export E2E_CSI_STORAGE_CLASS=${E2E_CSI_STORAGE_CLASS:-}
@@ -87,9 +94,6 @@ oc apply -f cloudnative-pg-catalog.yaml
 
 # create the secret for the index to be pulled in the marketplace
 oc create secret docker-registry -n openshift-marketplace --docker-server="${REGISTRY}" --docker-username="${REGISTRY_USER}" --docker-password="${REGISTRY_PASSWORD}" cnpg-pull-secret || true
-
-# Create the default configmap to set global keepalives on all the tests
-oc create configmap -n openshift-operators --from-literal=STANDBY_TCP_USER_TIMEOUT=5000 cnpg-controller-manager-config
 
 # Install the operator
 oc apply -f - <<EOF
@@ -103,6 +107,14 @@ spec:
   name: cloudnative-pg
   source: cloudnative-pg-catalog
   sourceNamespace: openshift-marketplace
+  config:
+    env:
+    - name: POSTGRES_IMAGE_NAME
+      value: ${POSTGRES_IMG}
+    - name: PGBOUNCER_IMAGE_NAME
+      value: ${PGBOUNCER_IMG}
+    - name: STANDBY_TCP_USER_TIMEOUT
+      value: "5000"
 EOF
 
 # The subscription will install the operator, but the service account used
@@ -120,19 +132,13 @@ CSV_NAME=$(oc get csv -n openshift-operators -l 'operators.coreos.com/cloudnativ
 DEPLOYMENT_NAME=$(oc get csv -n openshift-operators "$CSV_NAME" -o jsonpath='{.spec.install.spec.deployments[0].name}')
 wait_for deployment openshift-operators "$DEPLOYMENT_NAME" 5 60
 
-# Force a default postgresql image in the running operator
-oc patch -n openshift-operators csv "$CSV_NAME" --type='json' -p \
-"[
-  {\"op\": \"add\", \"path\": \"/spec/install/spec/deployments/0/spec/template/spec/containers/0/env/0\", \"value\": { \"name\": \"POSTGRES_IMAGE_NAME\", \"value\": \"${POSTGRES_IMG}\"}}
-]"
-
-# After patching, we need some time to propagate the change to the deployment and the pod.
+# After creating Subscription, OLM needs time to create and start the operator pod with the configured environment
 ITER=0
 while true; do
   ITER=$((ITER + 1))
   sleep 5
   if [[ $ITER -gt 60 ]]; then
-    echo "Patch not propagated to pod, exiting"
+    echo "OLM did not create operator pod with correct environment, exiting"
     oc get -n openshift-operators "$(oc get -n openshift-operators deployments -o name)" -o yaml || true
     oc get -n openshift-operators "$(oc get -n openshift-operators pods -o name)" -o yaml || true
     oc logs -n openshift-operators "$(oc get -n openshift-operators pods -o name)" || true
@@ -153,6 +159,11 @@ while true; do
   pod_postgres_img=$(oc get -n openshift-operators pods -l app.kubernetes.io/name=cloudnative-pg -o jsonpath="{.items[0].spec.containers[0].env[?(@.name=='POSTGRES_IMAGE_NAME')].value}" || true)
   if [[ "${pod_postgres_img}" != "${POSTGRES_IMG}" ]]; then
     echo "[$ITER] Expected POSTGRES_IMG to be $POSTGRES_IMG, got $pod_postgres_img instead"
+    continue
+  fi
+  pod_pgbouncer_img=$(oc get -n openshift-operators pods -l app.kubernetes.io/name=cloudnative-pg -o jsonpath="{.items[0].spec.containers[0].env[?(@.name=='PGBOUNCER_IMAGE_NAME')].value}" || true)
+  if [[ "${pod_pgbouncer_img}" != "${PGBOUNCER_IMG}" ]]; then
+    echo "[$ITER] Expected PGBOUNCER_IMG to be $PGBOUNCER_IMG, got $pod_pgbouncer_img instead"
     continue
   fi
   # All checks passed, proceeding

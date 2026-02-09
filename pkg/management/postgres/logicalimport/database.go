@@ -23,11 +23,11 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"slices"
 
 	"github.com/cloudnative-pg/machinery/pkg/execlog"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	"github.com/jackc/pgx/v5"
-	"k8s.io/utils/strings/slices"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/pool"
@@ -94,21 +94,23 @@ func (ds *databaseSnapshotter) exportDatabases(
 	extraOptions []string,
 ) error {
 	contextLogger := log.FromContext(ctx)
-	sectionsToExport := []string{}
+	sections := ds.getSectionsToExecute()
+	sectionsToExport := make([]string, 0, len(sections))
 
-	for _, section := range ds.getSectionsToExecute() {
+	for _, section := range sections {
 		sectionsToExport = append(sectionsToExport, fmt.Sprintf("--section=%s", section))
 	}
 
 	for _, database := range databases {
 		contextLogger.Info("exporting database", "databaseName", database)
 		dsn := target.GetDsn(database)
-		options := []string{
+		options := make([]string, 0, 6+len(sectionsToExport)+len(extraOptions))
+		options = append(options,
 			"-Fd",
 			"-f", generateFileNameForDatabase(database),
 			"-d", dsn,
 			"-v",
-		}
+		)
 		options = append(options, sectionsToExport...)
 		options = append(options, extraOptions...)
 
@@ -128,17 +130,17 @@ func (ds *databaseSnapshotter) importDatabases(
 	ctx context.Context,
 	target pool.Pooler,
 	databases []string,
-	extraOptions []string,
+	flags sectionOptions,
 ) error {
 	contextLogger := log.FromContext(ctx)
 
 	for _, database := range databases {
-		for _, section := range ds.getSectionsToExecute() {
+		for _, sec := range ds.getSectionsToExecute() {
 			targetDatabase := target.GetDsn(database)
 			contextLogger.Info(
 				"executing database importing section",
 				"databaseName", database,
-				"section", section,
+				"section", sec,
 			)
 
 			exists, err := ds.databaseExists(target, database)
@@ -158,11 +160,11 @@ func (ds *databaseSnapshotter) importDatabases(
 			alwaysPresentOptions := []string{
 				"-U", "postgres",
 				"-d", targetDatabase,
-				"--section", section,
+				"--section", string(sec),
 				generateFileNameForDatabase(database),
 			}
 
-			options = append(options, extraOptions...)
+			options = append(options, flags.forSection(sec)...)
 			options = append(options, alwaysPresentOptions...)
 
 			contextLogger.Info("Running pg_restore",
@@ -172,7 +174,7 @@ func (ds *databaseSnapshotter) importDatabases(
 			pgRestoreCommand := exec.Command(pgRestore, options...) // #nosec
 			err = execlog.RunStreaming(pgRestoreCommand, pgRestore)
 			if err != nil {
-				return fmt.Errorf("error while executing pg_restore, section:%s, %w", section, err)
+				return fmt.Errorf("error while executing pg_restore, section:%s, %w", sec, err)
 			}
 		}
 	}
@@ -186,7 +188,7 @@ func (ds *databaseSnapshotter) importDatabaseContent(
 	database string,
 	targetDatabase string,
 	owner string,
-	extraOptions []string,
+	flags sectionOptions,
 ) error {
 	contextLogger := log.FromContext(ctx)
 
@@ -212,19 +214,19 @@ func (ds *databaseSnapshotter) importDatabaseContent(
 			"section", section,
 		)
 
-		var options []string
-
 		alwaysPresentOptions := []string{
 			"-U", "postgres",
 			"--no-owner",
 			"--no-privileges",
 			fmt.Sprintf("--role=%s", owner),
 			"-d", targetDatabase,
-			"--section", section,
+			"--section", string(section),
 			generateFileNameForDatabase(database),
 		}
 
-		options = append(options, extraOptions...)
+		sectionFlags := flags.forSection(section)
+		options := make([]string, 0, len(sectionFlags)+len(alwaysPresentOptions))
+		options = append(options, sectionFlags...)
 		options = append(options, alwaysPresentOptions...)
 
 		contextLogger.Info("Running pg_restore",
@@ -364,16 +366,17 @@ func (ds *databaseSnapshotter) dropExtensionsFromDatabase(
 // getSectionsToExecute determines which stages of `pg_restore` and `pg_dump` to execute,
 // based on the configuration of the cluster. It returns a slice of strings representing
 // the sections to execute. These sections are labeled as "pre-data", "data", and "post-data".
-func (ds *databaseSnapshotter) getSectionsToExecute() []string {
-	const (
-		preData  = "pre-data"
-		data     = "data"
-		postData = "post-data"
-	)
-
+func (ds *databaseSnapshotter) getSectionsToExecute() []section {
 	if ds.cluster.Spec.Bootstrap.InitDB.Import.SchemaOnly {
-		return []string{preData, postData}
+		return []section{
+			sectionPreData,
+			sectionPostData,
+		}
 	}
 
-	return []string{preData, data, postData}
+	return []section{
+		sectionPreData,
+		sectionData,
+		sectionPostData,
+	}
 }

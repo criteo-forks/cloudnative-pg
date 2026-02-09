@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1
 
 import (
+	machineryapi "github.com/cloudnative-pg/machinery/pkg/api"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -112,6 +113,11 @@ const (
 	// MissingWALDiskSpaceExitCode is the exit code the instance manager
 	// will use to signal that there's no more WAL disk space
 	MissingWALDiskSpaceExitCode = 4
+
+	// MissingWALArchivePlugin is the exit code used by the instance manager
+	// to indicate that it started successfully, but the configured WAL
+	// archiving plugin is not available.
+	MissingWALArchivePlugin = 5
 )
 
 // SnapshotOwnerReference defines the reference type for the owner of the snapshot.
@@ -120,8 +126,8 @@ type SnapshotOwnerReference string
 
 // Constants to represent the allowed types for SnapshotOwnerReference.
 const (
-	// ShapshotOwnerReferenceNone indicates that the snapshot does not have any owner reference.
-	ShapshotOwnerReferenceNone SnapshotOwnerReference = "none"
+	// SnapshotOwnerReferenceNone indicates that the snapshot does not have any owner reference.
+	SnapshotOwnerReferenceNone SnapshotOwnerReference = "none"
 	// SnapshotOwnerReferenceBackup indicates that the snapshot is owned by the backup resource.
 	SnapshotOwnerReferenceBackup SnapshotOwnerReference = "backup"
 	// SnapshotOwnerReferenceCluster indicates that the snapshot is owned by the cluster resource.
@@ -382,8 +388,7 @@ type ClusterSpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
 	// InitContainerResources defines the resource requirements for init containers.
-	// If not specified, init containers will use the same resources as the main
-	// PostgreSQL container (Resources field).
+	// If not set, the main container Resources are used for the bootstrap init container.
 	// +optional
 	InitContainerResources *corev1.ResourceRequirements `json:"initContainerResources,omitempty"`
 
@@ -409,7 +414,10 @@ type ClusterSpec struct {
 
 	// Method to follow to upgrade the primary server during a rolling
 	// update procedure, after all replicas have been successfully updated:
-	// it can be with a switchover (`switchover`) or in-place (`restart` - default)
+	// it can be with a switchover (`switchover`) or in-place (`restart` - default).
+	// Note: when using `switchover`, the operator will reject updates that change both
+	// the image name and PostgreSQL configuration parameters simultaneously to avoid
+	// configuration mismatches during the switchover process.
 	// +kubebuilder:default:=restart
 	// +kubebuilder:validation:Enum:=switchover;restart
 	// +optional
@@ -463,6 +471,19 @@ type ClusterSpec struct {
 	// +optional
 	SeccompProfile *corev1.SeccompProfile `json:"seccompProfile,omitempty"`
 
+	// Override the PodSecurityContext applied to every Pod of the cluster.
+	// When set, this overrides the operator's default PodSecurityContext for the cluster.
+	// If omitted, the operator defaults are used.
+	// This field doesn't have any effect if SecurityContextConstraints are present.
+	// +optional
+	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
+
+	// Override the SecurityContext applied to every Container in the Pod of the cluster.
+	// When set, this overrides the operator's default Container SecurityContext.
+	// If omitted, the operator defaults are used.
+	// +optional
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
+
 	// The tablespaces configuration
 	// +optional
 	Tablespaces []TablespaceConfiguration `json:"tablespaces,omitempty"`
@@ -497,7 +518,7 @@ type ProbesConfiguration struct {
 	Startup *ProbeWithStrategy `json:"startup,omitempty"`
 
 	// The liveness probe configuration
-	Liveness *Probe `json:"liveness,omitempty"`
+	Liveness *LivenessProbe `json:"liveness,omitempty"`
 
 	// The readiness probe configuration
 	Readiness *ProbeWithStrategy `json:"readiness,omitempty"`
@@ -575,6 +596,39 @@ type Probe struct {
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
 }
 
+// LivenessProbe is the configuration of the liveness probe
+type LivenessProbe struct {
+	// Probe is the standard probe configuration
+	Probe `json:",inline"`
+
+	// Configure the feature that extends the liveness probe for a primary
+	// instance. In addition to the basic checks, this verifies whether the
+	// primary is isolated from the Kubernetes API server and from its
+	// replicas, ensuring that it can be safely shut down if network
+	// partition or API unavailability is detected. Enabled by default.
+	// +optional
+	IsolationCheck *IsolationCheckConfiguration `json:"isolationCheck,omitempty"`
+}
+
+// IsolationCheckConfiguration contains the configuration for the isolation check
+// functionality in the liveness probe
+type IsolationCheckConfiguration struct {
+	// Whether primary isolation checking is enabled for the liveness probe
+	// +optional
+	// +kubebuilder:default:=true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Timeout in milliseconds for requests during the primary isolation check
+	// +optional
+	// +kubebuilder:default:=1000
+	RequestTimeout int `json:"requestTimeout,omitempty"`
+
+	// Timeout in milliseconds for connections during the primary isolation check
+	// +optional
+	// +kubebuilder:default:=1000
+	ConnectionTimeout int `json:"connectionTimeout,omitempty"`
+}
+
 const (
 	// PhaseSwitchover when a cluster is changing the primary node
 	PhaseSwitchover = "Switchover in progress"
@@ -613,6 +667,9 @@ const (
 	// PhaseUnknownPlugin is triggered when the required CNPG-i plugin have not been
 	// loaded still
 	PhaseUnknownPlugin = "Cluster cannot proceed to reconciliation due to an unknown plugin being required"
+
+	// PhaseFailurePlugin is triggered when the cluster cannot proceed to reconciliation due to an interaction failure
+	PhaseFailurePlugin = "Cluster cannot proceed to reconciliation due to an error while interacting with plugins"
 
 	// PhaseImageCatalogError is triggered when the cluster cannot select the image to
 	// apply because of an invalid or incomplete catalog
@@ -1195,6 +1252,16 @@ type ReplicationSlotsHAConfiguration struct {
 	// +kubebuilder:validation:Pattern=^[0-9a-z_]*$
 	// +optional
 	SlotPrefix string `json:"slotPrefix,omitempty"`
+
+	// When enabled, the operator automatically manages synchronization of logical
+	// decoding (replication) slots across high-availability clusters.
+	//
+	// Requires one of the following conditions:
+	// - PostgreSQL version 17 or later
+	// - PostgreSQL version < 17 with pg_failover_slots extension enabled
+	//
+	// +optional
+	SynchronizeLogicalDecoding bool `json:"synchronizeLogicalDecoding,omitempty"`
 }
 
 // KubernetesUpgradeStrategy tells the operator if the user want to
@@ -1252,7 +1319,10 @@ const (
 	PrimaryUpdateStrategyUnsupervised PrimaryUpdateStrategy = "unsupervised"
 
 	// PrimaryUpdateMethodSwitchover means that the operator will switchover to another updated
-	// replica when it needs to upgrade the primary instance
+	// replica when it needs to upgrade the primary instance.
+	// Note: when using this method, the operator will reject updates that change both
+	// the image name and PostgreSQL configuration parameters simultaneously to avoid
+	// configuration mismatches during the switchover process.
 	PrimaryUpdateMethodSwitchover PrimaryUpdateMethod = "switchover"
 
 	// PrimaryUpdateMethodRestart means that the operator will restart the primary instance in-place
@@ -1344,6 +1414,12 @@ type SynchronousReplicaConfiguration struct {
 	// +kubebuilder:validation:Enum=required;preferred
 	// +optional
 	DataDurability DataDurabilityLevel `json:"dataDurability,omitempty"`
+
+	// FailoverQuorum enables a quorum-based check before failover, improving
+	// data durability and safety during failover events in CloudNativePG-managed
+	// PostgreSQL clusters.
+	// +optional
+	FailoverQuorum bool `json:"failoverQuorum"`
 }
 
 // PostgresConfiguration defines the PostgreSQL configuration
@@ -1391,6 +1467,37 @@ type PostgresConfiguration struct {
 	// Defaults to false.
 	// +optional
 	EnableAlterSystem bool `json:"enableAlterSystem,omitempty"`
+
+	// The configuration of the extensions to be added
+	// +optional
+	Extensions []ExtensionConfiguration `json:"extensions,omitempty"`
+}
+
+// ExtensionConfiguration is the configuration used to add
+// PostgreSQL extensions to the Cluster.
+type ExtensionConfiguration struct {
+	// The name of the extension, required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9_]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// The image containing the extension, required
+	// +kubebuilder:validation:XValidation:rule="has(self.reference)",message="An image reference is required"
+	ImageVolumeSource corev1.ImageVolumeSource `json:"image"`
+
+	// The list of directories inside the image which should be added to extension_control_path.
+	// If not defined, defaults to "/share".
+	// +optional
+	ExtensionControlPath []string `json:"extension_control_path,omitempty"`
+
+	// The list of directories inside the image which should be added to dynamic_library_path.
+	// If not defined, defaults to "/lib".
+	// +optional
+	DynamicLibraryPath []string `json:"dynamic_library_path,omitempty"`
+
+	// The list of directories inside the image which should be added to ld_library_path.
+	// +optional
+	LdLibraryPath []string `json:"ld_library_path,omitempty"`
 }
 
 // BootstrapConfiguration contains information about how to create the PostgreSQL
@@ -1709,19 +1816,58 @@ type Import struct {
 	// +optional
 	SchemaOnly bool `json:"schemaOnly,omitempty"`
 
-	// List of custom options to pass to the `pg_dump` command. IMPORTANT:
-	// Use these options with caution and at your own risk, as the operator
-	// does not validate their content. Be aware that certain options may
-	// conflict with the operator's intended functionality or design.
+	// List of custom options to pass to the `pg_dump` command.
+	//
+	// IMPORTANT: Use with caution. The operator does not validate these options,
+	// and certain flags may interfere with its intended functionality or design.
+	// You are responsible for ensuring that the provided options are compatible
+	// with your environment and desired behavior.
+	//
 	// +optional
 	PgDumpExtraOptions []string `json:"pgDumpExtraOptions,omitempty"`
 
-	// List of custom options to pass to the `pg_restore` command. IMPORTANT:
-	// Use these options with caution and at your own risk, as the operator
-	// does not validate their content. Be aware that certain options may
-	// conflict with the operator's intended functionality or design.
+	// List of custom options to pass to the `pg_restore` command.
+	//
+	// IMPORTANT: Use with caution. The operator does not validate these options,
+	// and certain flags may interfere with its intended functionality or design.
+	// You are responsible for ensuring that the provided options are compatible
+	// with your environment and desired behavior.
+	//
 	// +optional
 	PgRestoreExtraOptions []string `json:"pgRestoreExtraOptions,omitempty"`
+
+	// Custom options to pass to the `pg_restore` command during the `pre-data`
+	// section. This setting overrides the generic `pgRestoreExtraOptions` value.
+	//
+	// IMPORTANT: Use with caution. The operator does not validate these options,
+	// and certain flags may interfere with its intended functionality or design.
+	// You are responsible for ensuring that the provided options are compatible
+	// with your environment and desired behavior.
+	//
+	// +optional
+	PgRestorePredataOptions []string `json:"pgRestorePredataOptions,omitempty"`
+
+	// Custom options to pass to the `pg_restore` command during the `data`
+	// section. This setting overrides the generic `pgRestoreExtraOptions` value.
+	//
+	// IMPORTANT: Use with caution. The operator does not validate these options,
+	// and certain flags may interfere with its intended functionality or design.
+	// You are responsible for ensuring that the provided options are compatible
+	// with your environment and desired behavior.
+	//
+	// +optional
+	PgRestoreDataOptions []string `json:"pgRestoreDataOptions,omitempty"`
+
+	// Custom options to pass to the `pg_restore` command during the `post-data`
+	// section. This setting overrides the generic `pgRestoreExtraOptions` value.
+	//
+	// IMPORTANT: Use with caution. The operator does not validate these options,
+	// and certain flags may interfere with its intended functionality or design.
+	// You are responsible for ensuring that the provided options are compatible
+	// with your environment and desired behavior.
+	//
+	// +optional
+	PgRestorePostdataOptions []string `json:"pgRestorePostdataOptions,omitempty"`
 }
 
 // ImportSource describes the source for the logical snapshot
@@ -1822,7 +1968,7 @@ type DataSource struct {
 // BackupSource contains the backup we need to restore from, plus some
 // information that could be needed to correctly restore it.
 type BackupSource struct {
-	LocalObjectReference `json:",inline"`
+	machineryapi.LocalObjectReference `json:",inline"`
 	// EndpointCA store the CA bundle of the barman endpoint.
 	// Useful when using self-signed certificates to avoid
 	// errors with certificate issuer and barman-cloud-wal-archive.
@@ -1880,7 +2026,8 @@ type RecoveryTarget struct {
 	// +optional
 	TargetLSN string `json:"targetLSN,omitempty"`
 
-	// The target time as a timestamp in the RFC3339 standard
+	// The target time as a timestamp in RFC3339 format or PostgreSQL timestamp format.
+	// Timestamps without an explicit timezone are interpreted as UTC.
 	// +optional
 	TargetTime string `json:"targetTime,omitempty"`
 
@@ -2102,6 +2249,14 @@ type MonitoringConfiguration struct {
 	// you need this functionality, you can create a PodMonitor manually.
 	// +optional
 	PodMonitorRelabelConfigs []monitoringv1.RelabelConfig `json:"podMonitorRelabelings,omitempty"`
+
+	// The interval during which metrics computed from queries are considered current.
+	// Once it is exceeded, a new scrape will trigger a rerun
+	// of the queries.
+	// If not set, defaults to 30 seconds, in line with Prometheus scraping defaults.
+	// Setting this to zero disables the caching mechanism and can cause heavy load on the PostgreSQL server.
+	// +optional
+	MetricsQueriesTTL *metav1.Duration `json:"metricsQueriesTTL,omitempty"`
 }
 
 // ClusterMonitoringTLSConfiguration is the type containing the TLS configuration

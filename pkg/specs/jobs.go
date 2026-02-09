@@ -207,13 +207,15 @@ func CreatePrimaryJobViaRestoreSnapshot(
 
 // CreatePrimaryJobViaRecovery creates a new primary instance in a Pod, restoring from a Backup
 func CreatePrimaryJobViaRecovery(cluster apiv1.Cluster, nodeSerial int, backup *apiv1.Backup) *batchv1.Job {
-	initCommand := []string{
+	commonFlags := buildCommonInitJobFlags(cluster)
+	initCommand := make([]string, 0, 3+len(commonFlags))
+	initCommand = append(initCommand,
 		"/controller/manager",
 		"instance",
 		"restore",
-	}
+	)
 
-	initCommand = append(initCommand, buildCommonInitJobFlags(cluster)...)
+	initCommand = append(initCommand, commonFlags...)
 
 	job := CreatePrimaryJob(cluster, nodeSerial, jobRoleFullRecovery, initCommand)
 
@@ -248,41 +250,47 @@ func addBarmanEndpointCAToJobFromCluster(cluster apiv1.Cluster, backup *apiv1.Ba
 
 // CreatePrimaryJobViaPgBaseBackup creates a new primary instance in a Pod
 func CreatePrimaryJobViaPgBaseBackup(cluster apiv1.Cluster, nodeSerial int) *batchv1.Job {
-	initCommand := []string{
+	commonFlags := buildCommonInitJobFlags(cluster)
+	initCommand := make([]string, 0, 3+len(commonFlags))
+	initCommand = append(initCommand,
 		"/controller/manager",
 		"instance",
 		"pgbasebackup",
-	}
+	)
 
-	initCommand = append(initCommand, buildCommonInitJobFlags(cluster)...)
+	initCommand = append(initCommand, commonFlags...)
 
 	return CreatePrimaryJob(cluster, nodeSerial, jobRolePGBaseBackup, initCommand)
 }
 
 // JoinReplicaInstance create a new PostgreSQL node, copying the contents from another Pod
 func JoinReplicaInstance(cluster apiv1.Cluster, nodeSerial int) *batchv1.Job {
-	initCommand := []string{
+	commonFlags := buildCommonInitJobFlags(cluster)
+	initCommand := make([]string, 0, 5+len(commonFlags))
+	initCommand = append(initCommand,
 		"/controller/manager",
 		"instance",
 		"join",
 		"--parent-node", cluster.GetServiceReadWriteName(),
-	}
+	)
 
-	initCommand = append(initCommand, buildCommonInitJobFlags(cluster)...)
+	initCommand = append(initCommand, commonFlags...)
 
 	return CreatePrimaryJob(cluster, nodeSerial, jobRoleJoin, initCommand)
 }
 
 // RestoreReplicaInstance creates a new PostgreSQL replica starting from a volume snapshot backup
 func RestoreReplicaInstance(cluster apiv1.Cluster, nodeSerial int) *batchv1.Job {
-	initCommand := []string{
+	commonFlags := buildCommonInitJobFlags(cluster)
+	initCommand := make([]string, 0, 4+len(commonFlags))
+	initCommand = append(initCommand,
 		"/controller/manager",
 		"instance",
 		"restoresnapshot",
 		"--immediate",
-	}
+	)
 
-	initCommand = append(initCommand, buildCommonInitJobFlags(cluster)...)
+	initCommand = append(initCommand, commonFlags...)
 
 	job := CreatePrimaryJob(cluster, nodeSerial, jobRoleSnapshotRecovery, initCommand)
 	return job
@@ -320,6 +328,7 @@ func (role jobRole) getJobName(instanceName string) string {
 func CreatePrimaryJob(cluster apiv1.Cluster, nodeSerial int, role jobRole, initCommand []string) *batchv1.Job {
 	instanceName := GetInstanceName(cluster.Name, nodeSerial)
 	jobName := role.getJobName(instanceName)
+	version, _ := cluster.GetPostgresqlMajorVersion()
 
 	envConfig := CreatePodEnvConfig(cluster, jobName)
 
@@ -328,18 +337,28 @@ func CreatePrimaryJob(cluster apiv1.Cluster, nodeSerial int, role jobRole, initC
 			Name:      jobName,
 			Namespace: cluster.Namespace,
 			Labels: map[string]string{
-				utils.InstanceNameLabelName: instanceName,
-				utils.ClusterLabelName:      cluster.Name,
-				utils.JobRoleLabelName:      string(role),
+				utils.InstanceNameLabelName:           instanceName,
+				utils.ClusterLabelName:                cluster.Name,
+				utils.JobRoleLabelName:                string(role),
+				utils.KubernetesAppLabelName:          utils.AppName,
+				utils.KubernetesAppInstanceLabelName:  cluster.Name,
+				utils.KubernetesAppVersionLabelName:   fmt.Sprint(version),
+				utils.KubernetesAppComponentLabelName: utils.DatabaseComponentName,
+				utils.KubernetesAppManagedByLabelName: utils.ManagerName,
 			},
 		},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						utils.InstanceNameLabelName: instanceName,
-						utils.ClusterLabelName:      cluster.Name,
-						utils.JobRoleLabelName:      string(role),
+						utils.InstanceNameLabelName:           instanceName,
+						utils.ClusterLabelName:                cluster.Name,
+						utils.JobRoleLabelName:                string(role),
+						utils.KubernetesAppLabelName:          utils.AppName,
+						utils.KubernetesAppInstanceLabelName:  cluster.Name,
+						utils.KubernetesAppVersionLabelName:   fmt.Sprint(version),
+						utils.KubernetesAppComponentLabelName: utils.DatabaseComponentName,
+						utils.KubernetesAppManagedByLabelName: utils.ManagerName,
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -358,14 +377,11 @@ func CreatePrimaryJob(cluster apiv1.Cluster, nodeSerial int, role jobRole, initC
 							Command:         initCommand,
 							VolumeMounts:    CreatePostgresVolumeMounts(cluster),
 							Resources:       cluster.Spec.Resources,
-							SecurityContext: CreateContainerSecurityContext(cluster.GetSeccompProfile()),
+							SecurityContext: GetSecurityContext(&cluster),
 						},
 					},
-					Volumes: createPostgresVolumes(&cluster, instanceName),
-					SecurityContext: CreatePodSecurityContext(
-						cluster.GetSeccompProfile(),
-						cluster.GetPostgresUID(),
-						cluster.GetPostgresGID()),
+					Volumes:                   createPostgresVolumes(&cluster, instanceName),
+					SecurityContext:           GetPodSecurityContext(&cluster),
 					Affinity:                  CreateAffinitySection(cluster.Name, cluster.Spec.Affinity),
 					Tolerations:               cluster.Spec.Affinity.Tolerations,
 					ServiceAccountName:        cluster.Name,
