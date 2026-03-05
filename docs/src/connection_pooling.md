@@ -219,6 +219,83 @@ This gives you the flexibility — and responsibility — to manage the
 authentication process yourself. You can follow the instructions above to
 replicate similar behavior to the default setup.
 
+### LDAP authentication
+
+Starting with PgBouncer 1.25, you can configure client authentication against
+an LDAP server. CloudNativePG supports this via the `spec.pgbouncer.ldap`
+field, which generates the appropriate LDAP rules in PgBouncer's `pg_hba.conf`.
+
+LDAP authentication only applies to client connections to PgBouncer. The
+backend connection from PgBouncer to PostgreSQL continues to use the standard
+`auth_user`/`auth_query` mechanism.
+
+Two modes are supported:
+
+- **Simple bind**: constructs the user DN as `prefix + username + suffix`
+- **Search+bind**: binds with fixed credentials, searches for the user, then
+  rebinds as that user to verify the password
+
+#### Simple bind example
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pooler-ldap-bind
+spec:
+  cluster:
+    name: cluster-example
+  instances: 3
+  pgbouncer:
+    poolMode: session
+    ldap:
+      server: ldap.example.com
+      port: 389
+      tls: true
+      bindAsAuth:
+        prefix: "cn="
+        suffix: ",ou=users,dc=example,dc=com"
+```
+
+#### Search+bind example
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pooler-ldap-search
+spec:
+  cluster:
+    name: cluster-example
+  instances: 3
+  pgbouncer:
+    poolMode: session
+    ldap:
+      server: ldap.example.com
+      port: 636
+      scheme: ldaps
+      bindSearchAuth:
+        baseDN: "dc=example,dc=com"
+        bindDN: "cn=admin,dc=example,dc=com"
+        bindPassword:
+          name: ldap-bind-secret
+          key: password
+        searchAttribute: uid
+```
+
+The `bindPassword` field references a Kubernetes Secret containing the LDAP
+bind password. Create it before applying the Pooler:
+
+```bash
+kubectl create secret generic ldap-bind-secret \
+  --from-literal=password=your-ldap-bind-password
+```
+
+:::warning
+    LDAP authentication in PgBouncer requires PgBouncer version 1.25 or later.
+    Ensure the PgBouncer image used by the operator meets this requirement.
+:::
+
 ## Pod templates
 
 

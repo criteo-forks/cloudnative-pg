@@ -24,6 +24,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 )
 
 // stringifyPgBouncerParameters will take map of PgBouncer parameters and emit
@@ -67,6 +69,51 @@ func buildPgBouncerParameters(userParameters map[string]string) map[string]strin
 	}
 
 	return params
+}
+
+// buildLDAPHBAOptions constructs the LDAP option string for a pg_hba.conf rule.
+// The output format matches PostgreSQL's HBA LDAP syntax
+// (e.g. ldapserver="host" ldapport=389 ldapbasedn="dc=example,dc=com" ...).
+func buildLDAPHBAOptions(ldap *apiv1.LDAPConfig, bindPassword string) string {
+	var opts string
+	opts += fmt.Sprintf("ldapserver=%s", quoteHbaLiteral(ldap.Server))
+	if ldap.Port != 0 {
+		opts += fmt.Sprintf(" ldapport=%d", ldap.Port)
+	}
+	if ldap.Scheme != "" {
+		opts += fmt.Sprintf(" ldapscheme=%s", quoteHbaLiteral(string(ldap.Scheme)))
+	}
+	if ldap.TLS {
+		opts += " ldaptls=1"
+	}
+	if ldap.BindAsAuth != nil {
+		opts += fmt.Sprintf(" ldapprefix=%s ldapsuffix=%s",
+			quoteHbaLiteral(ldap.BindAsAuth.Prefix),
+			quoteHbaLiteral(ldap.BindAsAuth.Suffix))
+	}
+	if ldap.BindSearchAuth != nil {
+		opts += fmt.Sprintf(" ldapbasedn=%s ldapbinddn=%s ldapbindpasswd=%s",
+			quoteHbaLiteral(ldap.BindSearchAuth.BaseDN),
+			quoteHbaLiteral(ldap.BindSearchAuth.BindDN),
+			quoteHbaLiteral(bindPassword))
+		if ldap.BindSearchAuth.SearchFilter != "" {
+			opts += fmt.Sprintf(" ldapsearchfilter=%s",
+				quoteHbaLiteral(ldap.BindSearchAuth.SearchFilter))
+		}
+		if ldap.BindSearchAuth.SearchAttribute != "" {
+			opts += fmt.Sprintf(" ldapsearchattribute=%s",
+				quoteHbaLiteral(ldap.BindSearchAuth.SearchAttribute))
+		}
+	}
+	return opts
+}
+
+// quoteHbaLiteral quotes a string according to pg_hba.conf rules.
+// See https://www.postgresql.org/docs/current/auth-pg-hba-conf.html
+func quoteHbaLiteral(literal string) string {
+	literal = strings.ReplaceAll(literal, `"`, `""`)
+	literal = strings.ReplaceAll(literal, "\n", "\\\n")
+	return fmt.Sprintf(`"%s"`, literal)
 }
 
 // The following regexp will match any newline character. PgBouncer

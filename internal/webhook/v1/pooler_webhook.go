@@ -237,7 +237,55 @@ func (v *PoolerCustomValidator) validateCluster(r *apiv1.Pooler) field.ErrorList
 func (v *PoolerCustomValidator) validate(r *apiv1.Pooler) (allErrs field.ErrorList) {
 	allErrs = append(allErrs, v.validatePgBouncer(r)...)
 	allErrs = append(allErrs, v.validateCluster(r)...)
+	allErrs = append(allErrs, v.validatePgBouncerLDAP(r)...)
 	return allErrs
+}
+
+// validatePgBouncerLDAP validates the LDAP configuration for PgBouncer
+func (v *PoolerCustomValidator) validatePgBouncerLDAP(r *apiv1.Pooler) field.ErrorList {
+	if r.Spec.PgBouncer == nil || r.Spec.PgBouncer.LDAP == nil {
+		return nil
+	}
+
+	var result field.ErrorList
+	ldapPath := field.NewPath("spec", "pgbouncer", "ldap")
+	ldapConfig := r.Spec.PgBouncer.LDAP
+
+	if ldapConfig.Server == "" {
+		result = append(result,
+			field.Invalid(ldapPath.Child("server"),
+				ldapConfig.Server,
+				"ldap server cannot be empty when ldap is configured"))
+	}
+
+	if ldapConfig.BindAsAuth == nil && ldapConfig.BindSearchAuth == nil {
+		result = append(result,
+			field.Required(ldapPath,
+				"one of bindAsAuth or bindSearchAuth must be specified for LDAP authentication"))
+	}
+
+	if ldapConfig.BindSearchAuth != nil && ldapConfig.BindAsAuth != nil {
+		result = append(result,
+			field.Invalid(ldapPath,
+				"bindAsAuth and bindSearchAuth",
+				"only one of bindAsAuth or bindSearchAuth can be specified"))
+	}
+
+	if ldapConfig.BindSearchAuth != nil && ldapConfig.BindSearchAuth.BindPassword == nil {
+		result = append(result,
+			field.Required(ldapPath.Child("bindSearchAuth", "bindPassword"),
+				"bindPassword is required when using search+bind authentication"))
+	}
+
+	if ldapConfig.BindSearchAuth != nil &&
+		ldapConfig.BindSearchAuth.BindPassword != nil &&
+		ldapConfig.BindSearchAuth.BindPassword.Name == "" {
+		result = append(result,
+			field.Required(ldapPath.Child("bindSearchAuth", "bindPassword", "name"),
+				"secret name is required in bindPassword"))
+	}
+
+	return result
 }
 
 // validatePgbouncerGenericParameters validates pgbouncer parameters

@@ -87,8 +87,8 @@ const (
 [pgbouncer]
 pool_mode = {{ .Pooler.Spec.PgBouncer.PoolMode }}
 auth_user = {{ .AuthQueryUser }}
-auth_query = {{ .AuthQuery }}
-auth_dbname = {{ .AuthDBName }}
+{{ if .AuthQuery }}auth_query = {{ .AuthQuery }}
+{{ end }}auth_dbname = {{ .AuthDBName }}
 
 {{ .Parameters -}}
 `
@@ -99,8 +99,8 @@ local pgbouncer pgbouncer peer
 {{ $rule -}}
 {{ end }}
 
-host all all 0.0.0.0/0 md5
-host all all ::/0 md5
+host all all 0.0.0.0/0 {{ .DefaultAuthMethod }}
+host all all ::/0 {{ .DefaultAuthMethod }}
 `
 
 	pgBouncerUserListTemplateString = `
@@ -206,6 +206,23 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 		parameters["server_tls_key_file"] = serverTLSKeyPath
 	}
 
+	defaultAuthMethod := "md5"
+	if pooler.Spec.PgBouncer.LDAP != nil &&
+		(pooler.Spec.PgBouncer.LDAP.BindAsAuth != nil || pooler.Spec.PgBouncer.LDAP.BindSearchAuth != nil) {
+		defaultAuthMethod = "ldap " + buildLDAPHBAOptions(
+			pooler.Spec.PgBouncer.LDAP,
+			secrets.LDAPBindPassword,
+		)
+	}
+
+	authQuery := pooler.GetAuthQuery()
+	// PgBouncer does not allow LDAP (via HBA) together with database authentication (auth_query).
+	// When LDAP is used for client auth, leave auth_query unset so the client password is used for the backend.
+	if pooler.Spec.PgBouncer.LDAP != nil &&
+		(pooler.Spec.PgBouncer.LDAP.BindAsAuth != nil || pooler.Spec.PgBouncer.LDAP.BindSearchAuth != nil) {
+		authQuery = ""
+	}
+
 	templateData := struct {
 		Pooler            *apiv1.Pooler
 		AuthQuery         string
@@ -214,9 +231,10 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 		AuthDBName        string
 		Parameters        string
 		PgHba             []string
+		DefaultAuthMethod string
 	}{
 		Pooler:            pooler,
-		AuthQuery:         pooler.GetAuthQuery(),
+		AuthQuery:         authQuery,
 		AuthQueryUser:     authQueryUser,
 		AuthQueryPassword: authQueryPassword,
 		AuthDBName:        apiv1.PoolerAuthDBName,
@@ -227,8 +245,9 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 		//
 		// Also, we want the list of parameters inside the PgBouncer configuration
 		// to be stable.
-		Parameters: stringifyPgBouncerParameters(parameters),
-		PgHba:      pooler.Spec.PgBouncer.PgHBA,
+		Parameters:        stringifyPgBouncerParameters(parameters),
+		PgHba:             pooler.Spec.PgBouncer.PgHBA,
+		DefaultAuthMethod: defaultAuthMethod,
 	}
 
 	if err := pgBouncerIniTemplate.Execute(&pgbouncerIni, templateData); err != nil {
@@ -249,7 +268,16 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 	}
 	files[filepath.Join(ConfigsDir, PgBouncerHBAConfFileName)] = pgbouncerHBA.Bytes()
 
-	// The required crypto-material
+	// The required crypto-material (must be present; reconciler retries until secrets are available)
+	if secrets.ServerCA == nil {
+		return nil, fmt.Errorf("server CA secret not yet available")
+	}
+	if secrets.ClientCA == nil {
+		return nil, fmt.Errorf("client CA secret not yet available")
+	}
+	if secrets.ClientTLS == nil {
+		return nil, fmt.Errorf("client TLS secret not yet available")
+	}
 	files[serverTLSCAPath] = secrets.ServerCA.Data[certs.CACertKey]
 	files[clientTLSCAPath] = secrets.ClientCA.Data[certs.CACertKey]
 	files[clientTLSCertPath] = secrets.ClientTLS.Data[certs.TLSCertKey]
