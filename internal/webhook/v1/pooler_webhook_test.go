@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -137,5 +138,147 @@ var _ = Describe("Pooler validation", func() {
 			},
 		}
 		Expect(v.validatePgbouncerGenericParameters(pooler)).To(BeEmpty())
+	})
+
+	Context("LDAP validation", func() {
+		It("accepts a valid LDAP bind-as configuration", func() {
+			pooler := &apiv1.Pooler{
+				Spec: apiv1.PoolerSpec{
+					PgBouncer: &apiv1.PgBouncerSpec{
+						LDAP: &apiv1.LDAPConfig{
+							Server: "ldap.example.com",
+							BindAsAuth: &apiv1.LDAPBindAsAuth{
+								Prefix: "cn=",
+								Suffix: ",dc=example,dc=com",
+							},
+						},
+					},
+				},
+			}
+			Expect(v.validatePgBouncerLDAP(pooler)).To(BeEmpty())
+		})
+
+		It("accepts a valid LDAP search+bind configuration", func() {
+			pooler := &apiv1.Pooler{
+				Spec: apiv1.PoolerSpec{
+					PgBouncer: &apiv1.PgBouncerSpec{
+						LDAP: &apiv1.LDAPConfig{
+							Server: "ldap.example.com",
+							BindSearchAuth: &apiv1.LDAPBindSearchAuth{
+								BaseDN: "dc=example,dc=com",
+								BindDN: "cn=admin,dc=example,dc=com",
+								BindPassword: &corev1.SecretKeySelector{
+									LocalObjectReference: corev1.LocalObjectReference{Name: "ldap-secret"},
+									Key:                  "password",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(v.validatePgBouncerLDAP(pooler)).To(BeEmpty())
+		})
+
+		It("rejects LDAP with server only and no auth mode", func() {
+			pooler := &apiv1.Pooler{
+				Spec: apiv1.PoolerSpec{
+					PgBouncer: &apiv1.PgBouncerSpec{
+						LDAP: &apiv1.LDAPConfig{
+							Server: "ldap.example.com",
+						},
+					},
+				},
+			}
+			errs := v.validatePgBouncerLDAP(pooler)
+			Expect(errs).NotTo(BeEmpty())
+			Expect(errs[0].Detail).To(ContainSubstring("bindAsAuth or bindSearchAuth"))
+		})
+
+		It("rejects LDAP with empty server", func() {
+			pooler := &apiv1.Pooler{
+				Spec: apiv1.PoolerSpec{
+					PgBouncer: &apiv1.PgBouncerSpec{
+						LDAP: &apiv1.LDAPConfig{
+							Server: "",
+							BindAsAuth: &apiv1.LDAPBindAsAuth{
+								Prefix: "cn=",
+								Suffix: ",dc=example,dc=com",
+							},
+						},
+					},
+				},
+			}
+			Expect(v.validatePgBouncerLDAP(pooler)).NotTo(BeEmpty())
+		})
+
+		It("rejects LDAP with both bindAsAuth and bindSearchAuth", func() {
+			pooler := &apiv1.Pooler{
+				Spec: apiv1.PoolerSpec{
+					PgBouncer: &apiv1.PgBouncerSpec{
+						LDAP: &apiv1.LDAPConfig{
+							Server:     "ldap.example.com",
+							BindAsAuth: &apiv1.LDAPBindAsAuth{Prefix: "cn="},
+							BindSearchAuth: &apiv1.LDAPBindSearchAuth{
+								BaseDN: "dc=example,dc=com",
+								BindPassword: &corev1.SecretKeySelector{
+									LocalObjectReference: corev1.LocalObjectReference{Name: "ldap-secret"},
+									Key:                  "password",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(v.validatePgBouncerLDAP(pooler)).NotTo(BeEmpty())
+		})
+
+		It("rejects search+bind without bindPassword", func() {
+			pooler := &apiv1.Pooler{
+				Spec: apiv1.PoolerSpec{
+					PgBouncer: &apiv1.PgBouncerSpec{
+						LDAP: &apiv1.LDAPConfig{
+							Server: "ldap.example.com",
+							BindSearchAuth: &apiv1.LDAPBindSearchAuth{
+								BaseDN: "dc=example,dc=com",
+								BindDN: "cn=admin,dc=example,dc=com",
+							},
+						},
+					},
+				},
+			}
+			Expect(v.validatePgBouncerLDAP(pooler)).NotTo(BeEmpty())
+		})
+
+		It("rejects search+bind with bindPassword missing secret name", func() {
+			pooler := &apiv1.Pooler{
+				Spec: apiv1.PoolerSpec{
+					PgBouncer: &apiv1.PgBouncerSpec{
+						LDAP: &apiv1.LDAPConfig{
+							Server: "ldap.example.com",
+							BindSearchAuth: &apiv1.LDAPBindSearchAuth{
+								BaseDN: "dc=example,dc=com",
+								BindDN: "cn=admin,dc=example,dc=com",
+								BindPassword: &corev1.SecretKeySelector{
+									LocalObjectReference: corev1.LocalObjectReference{Name: ""},
+									Key:                  "password",
+								},
+							},
+						},
+					},
+				},
+			}
+			errs := v.validatePgBouncerLDAP(pooler)
+			Expect(errs).NotTo(BeEmpty())
+			Expect(errs[0].Field).To(ContainSubstring("bindPassword.name"))
+		})
+
+		It("passes validation when no LDAP is configured", func() {
+			pooler := &apiv1.Pooler{
+				Spec: apiv1.PoolerSpec{
+					PgBouncer: &apiv1.PgBouncerSpec{},
+				},
+			}
+			Expect(v.validatePgBouncerLDAP(pooler)).To(BeEmpty())
+		})
 	})
 })

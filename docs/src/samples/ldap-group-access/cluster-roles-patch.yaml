@@ -1,0 +1,34 @@
+# Cluster patch — declare LDAP group roles as CNPG managed roles.
+#
+# These are group roles (NOLOGIN) used for permission inheritance.
+# Individual user roles created by the sync CronJob will be granted
+# membership in one of these roles.
+#
+# Apply with:
+#   kubectl patch cluster pg-instance -n pgrdsdb --type merge --patch-file cluster-roles-patch.yaml
+
+spec:
+  managed:
+    roles:
+      # Existing role — keep unchanged
+      - name: rdsprobe
+        login: true
+        inherit: true
+        connectionLimit: -1
+        ensure: present
+        passwordSecret:
+          name: probe-secret
+
+      # Full access group role (maps to LDAP group g-app-postgresql-pgrdsdb-f)
+      - name: g-app-postgresql-pgrdsdb-f
+        login: false
+        inherit: true
+        ensure: present
+        comment: "Full access to pgrdsdb — synced from LDAP group"
+
+      # Read-only group role (maps to LDAP group g-app-postgresql-pgrdsdb-ro)
+      - name: g-app-postgresql-pgrdsdb-ro
+        login: false
+        inherit: true
+        ensure: present
+        comment: "Read-only access to pgrdsdb — synced from LDAP group"

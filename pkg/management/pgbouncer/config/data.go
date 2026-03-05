@@ -40,6 +40,9 @@ type Secrets struct {
 
 	// The CA that will be used to validate the connections to PostgreSQL
 	ServerCA *corev1.Secret
+
+	// The LDAP bind password for search+bind mode (empty if not applicable)
+	LDAPBindPassword string
 }
 
 // ConfigurationFiles is a set of configuration files that are needed for

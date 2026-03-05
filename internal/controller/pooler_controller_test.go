@@ -89,6 +89,41 @@ var _ = Describe("pooler_controller unit tests", func() {
 		})
 	})
 
+	It("should map LDAP bind password secret to the correct pooler", func() {
+		namespace := newFakeNamespace(env.client)
+		cluster := newFakeCNPGCluster(env.client, namespace)
+
+		ldapSecretName := "ldap-bind-secret"
+
+		poolerWithLDAP := newFakePooler(env.client, cluster)
+		poolerWithLDAP.Spec.PgBouncer.LDAP = &apiv1.LDAPConfig{
+			Server: "ldap.example.com",
+			BindSearchAuth: &apiv1.LDAPBindSearchAuth{
+				BaseDN: "dc=example,dc=com",
+				BindPassword: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: ldapSecretName},
+					Key:                  "password",
+				},
+			},
+		}
+		err := env.client.Update(context.Background(), poolerWithLDAP)
+		Expect(err).ToNot(HaveOccurred())
+
+		poolerWithoutLDAP := newFakePooler(env.client, cluster)
+
+		poolerList := apiv1.PoolerList{Items: []apiv1.Pooler{*poolerWithLDAP, *poolerWithoutLDAP}}
+		ldapSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      ldapSecretName,
+				Namespace: namespace,
+			},
+		}
+
+		reqs := getPoolersUsingSecret(poolerList, ldapSecret)
+		Expect(reqs).To(HaveLen(1))
+		Expect(reqs[0].Name).To(Equal(poolerWithLDAP.Name))
+	})
+
 	It("should make sure to create a request for any pooler owned secret", func() {
 		namespace := newFakeNamespace(env.client)
 		cluster := newFakeCNPGCluster(env.client, namespace)

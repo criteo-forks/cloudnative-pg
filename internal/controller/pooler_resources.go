@@ -52,6 +52,9 @@ type poolerManagedResources struct {
 	// This is the root certificate to validate client certificates.
 	ClientCASecret *corev1.Secret
 
+	// The secret containing the LDAP bind password (for search+bind mode)
+	LDAPBindPasswordSecret *corev1.Secret
+
 	// This is the pgbouncer deployment
 	Deployment *appsv1.Deployment
 
@@ -137,6 +140,22 @@ func (r *PoolerReconciler) getManagedResources(
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	// Get the LDAP bind password secret if configured
+	if pooler.Spec.PgBouncer != nil &&
+		pooler.Spec.PgBouncer.LDAP != nil &&
+		pooler.Spec.PgBouncer.LDAP.BindSearchAuth != nil &&
+		pooler.Spec.PgBouncer.LDAP.BindSearchAuth.BindPassword != nil {
+		result.LDAPBindPasswordSecret, err = getSecretOrNil(
+			ctx, r.Client, client.ObjectKey{
+				Name:      pooler.Spec.PgBouncer.LDAP.BindSearchAuth.BindPassword.Name,
+				Namespace: pooler.Namespace,
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Get the pooler deployment

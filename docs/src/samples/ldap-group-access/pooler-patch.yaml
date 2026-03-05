@@ -1,0 +1,23 @@
+# Pooler patch — restrict PgBouncer LDAP authentication to members of
+# g-app-postgresql-pgrdsdb-f (full access) or g-app-postgresql-pgrdsdb-ro (read-only).
+#
+# Apply with:
+#   kubectl patch pooler pgrdsdb -n pgrdsdb --type merge --patch-file pooler-patch.yaml
+#
+# IMPORTANT: Adjust the OU in the memberOf DNs to match your AD group location.
+# The placeholder OU=FimGroups must be replaced with the actual OU containing the groups.
+
+spec:
+  pgbouncer:
+    ldap:
+      server: "ldaps-uadpreprod-preprod-crto-in.query.consul.preprod.crto.in"
+      scheme: ldaps
+      port: 636
+      bindSearchAuth:
+        baseDN: "OU=Fimusers,DC=uadpreprod,DC=preprod,DC=crto,DC=in"
+        bindDN: "CN=svc-pgrdsdb,OU=FimServices,DC=uadpreprod,DC=preprod,DC=crto,DC=in"
+        bindPassword:
+          name: pgrdsdb-default-secrets
+          key: password
+        searchFilter: "(&(sAMAccountName=$username)(|(memberOf=CN=g-app-postgresql-pgrdsdb-f,OU=FimGroups,DC=uadpreprod,DC=preprod,DC=crto,DC=in)(memberOf=CN=g-app-postgresql-pgrdsdb-ro,OU=FimGroups,DC=uadpreprod,DC=preprod,DC=crto,DC=in)))"
+        searchAttribute: "sAMAccountName"

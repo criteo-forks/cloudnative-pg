@@ -1,0 +1,144 @@
+# CronJob — Sync LDAP group membership to PostgreSQL roles
+#
+# Runs every 5 minutes. Queries AD for members of the full-access and read-only
+# groups, then creates/grants/revokes PostgreSQL roles accordingly.
+#
+# Prerequisites:
+#   1. ConfigMap 'ldap-role-sync-script' with the sync script (see below)
+#   2. Secret 'pgrdsdb-default-secrets' with LDAP bind password (key: password)
+#   3. Secret 'pg-instance-superuser' with PostgreSQL superuser password (key: password)
+#   4. Group roles already created in PostgreSQL (via cluster-roles-patch.yaml)
+#   5. GRANTs applied (via init-grants.sql)
+#
+# IMPORTANT: Replace OU=FimGroups in LDAP_GROUP_FULL and LDAP_GROUP_RO with
+# the actual OU containing your AD groups.
+#
+# Create the ConfigMap from the script:
+#   kubectl create configmap ldap-role-sync-script \
+#     --from-file=ldap-role-sync.sh=ldap-role-sync.sh \
+#     -n pgrdsdb
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ldap-role-sync-script
+  namespace: pgrdsdb
+data:
+  ldap-role-sync.sh: |
+    # Content is mounted from the ConfigMap created separately.
+    # See ldap-role-sync.sh for the full script.
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ldap-role-sync
+  namespace: pgrdsdb
+  labels:
+    app: ldap-role-sync
+    cnpg.io/cluster: pg-instance
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app: ldap-role-sync
+        spec:
+          restartPolicy: OnFailure
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+
+          containers:
+            - name: sync
+              # Image must contain: ldapsearch (ldap-utils) + psql (postgresql-client)
+              # Option A: Use a custom internal image with both tools
+              # Option B: Use a public image like bitnami/postgresql + install ldap-utils
+              image: filer-docker-registry.prod.crto.in/internal/ldap-psql-tools:latest
+              command: ["bash", "/scripts/ldap-role-sync.sh"]
+
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+
+              env:
+                # LDAP configuration
+                - name: LDAP_URI
+                  value: "ldaps://ldaps-uadpreprod-preprod-crto-in.query.consul.preprod.crto.in:636"
+                - name: LDAP_BIND_DN
+                  value: "CN=svc-pgrdsdb,OU=FimServices,DC=uadpreprod,DC=preprod,DC=crto,DC=in"
+                - name: LDAP_BASE_DN
+                  value: "OU=Fimusers,DC=uadpreprod,DC=preprod,DC=crto,DC=in"
+                - name: LDAP_BIND_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pgrdsdb-default-secrets
+                      key: password
+                - name: LDAPTLS_REQCERT
+                  value: "never"
+
+                # LDAP group DNs — ADJUST OU=FimGroups to your actual OU
+                - name: LDAP_GROUP_FULL
+                  value: "CN=g-app-postgresql-pgrdsdb-f,OU=FimGroups,DC=uadpreprod,DC=preprod,DC=crto,DC=in"
+                - name: LDAP_GROUP_RO
+                  value: "CN=g-app-postgresql-pgrdsdb-ro,OU=FimGroups,DC=uadpreprod,DC=preprod,DC=crto,DC=in"
+
+                # PostgreSQL group role names
+                - name: PG_GROUP_FULL
+                  value: "g-app-postgresql-pgrdsdb-f"
+                - name: PG_GROUP_RO
+                  value: "g-app-postgresql-pgrdsdb-ro"
+
+                # PostgreSQL connection
+                - name: PGHOST
+                  value: "pg-instance-rw.pgrdsdb.svc.cluster.local"
+                - name: PGPORT
+                  value: "5432"
+                - name: PGDATABASE
+                  value: "pgrdsdb"
+                - name: PGUSER
+                  value: "postgres"
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pg-instance-superuser
+                      key: password
+
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+
+          volumes:
+            - name: script
+              configMap:
+                name: ldap-role-sync-script
+                defaultMode: 0555
+            - name: tmp
+              emptyDir: {}
