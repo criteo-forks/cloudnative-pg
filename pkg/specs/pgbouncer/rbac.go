@@ -56,6 +56,14 @@ func Role(pooler *apiv1.Pooler) *rbacv1.Role {
 		}
 	}
 
+	if pooler.Spec.PgBouncer != nil &&
+		pooler.Spec.PgBouncer.LDAP != nil &&
+		pooler.Spec.PgBouncer.LDAP.BindSearchAuth != nil &&
+		pooler.Spec.PgBouncer.LDAP.BindSearchAuth.BindPassword != nil {
+		secretNames = append(secretNames,
+			pooler.Spec.PgBouncer.LDAP.BindSearchAuth.BindPassword.Name)
+	}
+
 	return &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{
 		Name: pooler.Name, Namespace: pooler.Namespace,
 	}, Rules: []rbacv1.PolicyRule{

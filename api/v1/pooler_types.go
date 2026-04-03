@@ -211,6 +211,12 @@ type PgBouncerSpec struct {
 	// +optional
 	PgHBA []string `json:"pg_hba,omitempty"`
 
+	// Options to specify LDAP configuration for client authentication.
+	// When set, PgBouncer will authenticate clients against the specified
+	// LDAP server via HBA rules. Requires PgBouncer >= 1.25.
+	// +optional
+	LDAP *LDAPConfig `json:"ldap,omitempty"`
+
 	// When set to `true`, PgBouncer will disconnect from the PostgreSQL
 	// server, first waiting for all queries to complete, and pause all new
 	// client connections until this value is set to `false` (default). Internally,
@@ -259,6 +265,10 @@ type PgBouncerSecrets struct {
 	// The auth query secret version
 	// +optional
 	AuthQuery SecretVersion `json:"authQuery,omitempty"`
+
+	// The LDAP bind password secret version
+	// +optional
+	LDAPBindPassword SecretVersion `json:"ldapBindPassword,omitempty"`
 }
 
 // SecretVersion contains a secret name and its ResourceVersion

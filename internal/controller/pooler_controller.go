@@ -262,6 +262,17 @@ func (r *PoolerReconciler) waitForPrerequisites(
 		return waitResult
 	}
 
+	if pooler.Spec.PgBouncer != nil &&
+		pooler.Spec.PgBouncer.LDAP != nil &&
+		pooler.Spec.PgBouncer.LDAP.BindSearchAuth != nil &&
+		pooler.Spec.PgBouncer.LDAP.BindSearchAuth.BindPassword != nil &&
+		resources.LDAPBindPasswordSecret == nil {
+		contextLogger.Info(
+			"LDAPBindPasswordSecret not found, waiting 30 seconds",
+			"secret", pooler.Spec.PgBouncer.LDAP.BindSearchAuth.BindPassword.Name)
+		return waitResult
+	}
+
 	return nil
 }
 
@@ -319,6 +330,20 @@ func getPoolersUsingSecret(poolers apiv1.PoolerList, secret *corev1.Secret) (req
 		}
 
 		if pooler.GetServerTLSSecretName() == secret.Name {
+			requests = append(requests,
+				types.NamespacedName{
+					Name:      pooler.Name,
+					Namespace: pooler.Namespace,
+				},
+			)
+			continue
+		}
+
+		if pooler.Spec.PgBouncer != nil &&
+			pooler.Spec.PgBouncer.LDAP != nil &&
+			pooler.Spec.PgBouncer.LDAP.BindSearchAuth != nil &&
+			pooler.Spec.PgBouncer.LDAP.BindSearchAuth.BindPassword != nil &&
+			pooler.Spec.PgBouncer.LDAP.BindSearchAuth.BindPassword.Name == secret.Name {
 			requests = append(requests,
 				types.NamespacedName{
 					Name:      pooler.Name,

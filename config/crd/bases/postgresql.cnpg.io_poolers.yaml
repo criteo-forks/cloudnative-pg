@@ -350,6 +350,82 @@ spec:
                     required:
                     - name
                     type: object
+                  ldap:
+                    description: |-
+                      Options to specify LDAP configuration for client authentication.
+                      When set, PgBouncer will authenticate clients against the specified
+                      LDAP server via HBA rules. Requires PgBouncer >= 1.25.
+                    properties:
+                      bindAsAuth:
+                        description: Bind as authentication configuration
+                        properties:
+                          prefix:
+                            description: Prefix for the bind authentication option
+                            type: string
+                          suffix:
+                            description: Suffix for the bind authentication option
+                            type: string
+                        type: object
+                      bindSearchAuth:
+                        description: Bind+Search authentication configuration
+                        properties:
+                          baseDN:
+                            description: Root DN to begin the user search
+                            type: string
+                          bindDN:
+                            description: DN of the user to bind to the directory
+                            type: string
+                          bindPassword:
+                            description: Secret with the password for the user to
+                              bind to the directory
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          searchAttribute:
+                            description: Attribute to match against the username
+                            type: string
+                          searchFilter:
+                            description: Search filter to use when doing the search+bind
+                              authentication
+                            type: string
+                        type: object
+                      port:
+                        description: LDAP server port
+                        type: integer
+                      scheme:
+                        description: LDAP schema to be used, possible options are
+                          `ldap` and `ldaps`
+                        enum:
+                        - ldap
+                        - ldaps
+                        type: string
+                      server:
+                        description: LDAP hostname or IP address
+                        type: string
+                      tls:
+                        description: Set to 'true' to enable LDAP over TLS. 'false'
+                          is default
+                        type: boolean
+                    type: object
                   parameters:
                     additionalProperties:
                       type: string
@@ -9324,6 +9400,16 @@ spec:
                     properties:
                       authQuery:
                         description: The auth query secret version
+                        properties:
+                          name:
+                            description: The name of the secret
+                            type: string
+                          version:
+                            description: The ResourceVersion of the secret
+                            type: string
+                        type: object
+                      ldapBindPassword:
+                        description: The LDAP bind password secret version
                         properties:
                           name:
                             description: The name of the secret

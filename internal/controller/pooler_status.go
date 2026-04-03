@@ -88,6 +88,15 @@ func (r *PoolerReconciler) updatePoolerStatus(
 		updatedStatus.Secrets.ServerTLS = apiv1.SecretVersion{}
 	}
 
+	if resources.LDAPBindPasswordSecret != nil {
+		updatedStatus.Secrets.PgBouncerSecrets.LDAPBindPassword = apiv1.SecretVersion{
+			Name:    resources.LDAPBindPasswordSecret.Name,
+			Version: resources.LDAPBindPasswordSecret.ResourceVersion,
+		}
+	} else {
+		updatedStatus.Secrets.PgBouncerSecrets.LDAPBindPassword = apiv1.SecretVersion{}
+	}
+
 	if resources.Deployment != nil {
 		updatedStatus.Instances = resources.Deployment.Status.Replicas
 	}
