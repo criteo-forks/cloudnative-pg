@@ -49,6 +49,13 @@ func (r *PoolerReconciler) updatePoolerStatus(
 		}
 	}
 
+	if resources.LDAPBindSecret != nil {
+		updatedStatus.Secrets.PgBouncerSecrets.LDAPBind = apiv1.SecretVersion{
+			Name:    resources.LDAPBindSecret.Name,
+			Version: resources.LDAPBindSecret.ResourceVersion,
+		}
+	}
+
 	if resources.ServerCASecret != nil {
 		updatedStatus.Secrets.ServerCA = apiv1.SecretVersion{
 			Name:    resources.ServerCASecret.Name,

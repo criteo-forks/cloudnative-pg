@@ -208,7 +208,7 @@ type PoolerLDAPConfig struct {
 	TLS *PoolerLDAPTLSConfig `json:"tls,omitempty"`
 
 	// Credentials references the Secret containing bind password for BindDN.
-	// The Secret must contain key "password" or "bindPassword". Required when enabled is true.
+	// The Secret must contain the key "password". Required when enabled is true.
 	// +optional
 	Credentials *PoolerLDAPCredentials `json:"credentials,omitempty"`
 }
@@ -229,7 +229,7 @@ type PoolerLDAPTLSConfig struct {
 // PoolerLDAPCredentials references the Kubernetes Secret holding LDAP bind credentials.
 type PoolerLDAPCredentials struct {
 	// Name of the Secret in the same namespace as the Pooler.
-	// Expected key: "password" or "bindPassword".
+	// Expected key: "password".
 	// +optional
 	SecretName string `json:"secretName,omitempty"`
 }
@@ -351,6 +351,10 @@ type PgBouncerSecrets struct {
 	// The auth query secret version
 	// +optional
 	AuthQuery SecretVersion `json:"authQuery,omitempty"`
+
+	// The LDAP bind secret version
+	// +optional
+	LDAPBind SecretVersion `json:"ldapBind,omitempty"`
 }
 
 // SecretVersion contains a secret name and its ResourceVersion
