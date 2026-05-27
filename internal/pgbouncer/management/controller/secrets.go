@@ -91,5 +91,21 @@ func getSecrets(ctx context.Context, client ctrl.Client, pooler *apiv1.Pooler) (
 	}
 	result.ClientCA = &clientCASecret
 
+	// Optional extra userlist entries: load if the convention-named secret exists.
+	// Used in mixed-auth LDAP+scram mode where the controller cannot generate
+	// scram hashes for non-LDAP users (rdsprobe, user-<db>-f, …) on its own.
+	// The operator (or a sidecar CronJob) populates this Opaque secret out-of-band
+	// from pg_authid.rolpassword, and the controller appends its content verbatim
+	// to the generated userlist.txt.
+	extraName := pooler.Spec.Cluster.Name + "-pgbouncer-userlist"
+	var extraSecret corev1.Secret
+	if err := client.Get(ctx,
+		types.NamespacedName{Name: extraName, Namespace: pooler.Namespace},
+		&extraSecret); err == nil {
+		if data, ok := extraSecret.Data[config.PgBouncerUserListFileName]; ok {
+			result.ExtraUserlist = data
+		}
+	}
+
 	return result, nil
 }

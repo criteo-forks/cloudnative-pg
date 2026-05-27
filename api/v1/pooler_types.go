@@ -47,8 +47,10 @@ const (
 	// PoolerAuthDBName is the database name used to run the auth_query
 	PoolerAuthDBName = "postgres"
 
-	// DefaultLDAPPort is the default LDAP port (non-TLS).
+	// DefaultLDAPPort is the default LDAP port (non-TLS or StartTLS).
 	DefaultLDAPPort = 389
+	// DefaultLDAPSPort is the default LDAPS port (implicit TLS).
+	DefaultLDAPSPort = 636
 	// DefaultLDAPSearchFilter is the default LDAP filter for user search.
 	DefaultLDAPSearchFilter = "(uid=%u)"
 )

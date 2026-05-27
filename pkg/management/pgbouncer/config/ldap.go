@@ -64,11 +64,19 @@ func encodeLDAPDN(dn string) string {
 }
 
 // buildLDAPURL builds the ldapurl value for auth_ldap_options (RFC 4516).
-// Format: ldap://host:port/baseDN??sub?filter
+// Format: ldap://host:port/baseDN??sub?filter or ldaps://host:port/baseDN??sub?filter
 // The filter is passed through without percent-encoding because PgBouncer
 // performs variable substitution on %u at auth time — encoding % to %25 would
 // break username interpolation.
 // No sensitive data is included; bind password is supplied via file by the controller.
+//
+// Scheme selection:
+//   - tls.enabled + port == 636 → ldaps:// (implicit TLS, LDAPS)
+//   - tls.enabled + port != 636 → ldap:// + ldaptls=1 in auth_ldap_options (StartTLS)
+//   - tls disabled              → ldap:// (plain LDAP)
+//
+// Active Directory typically refuses search operations over plain LDAP, so
+// most real deployments use either LDAPS (636) or StartTLS (389).
 func buildLDAPURL(pooler *apiv1.Pooler) (string, error) {
 	ldap := pooler.Spec.LDAP
 	if ldap == nil || !ldap.Enabled {
@@ -79,7 +87,7 @@ func buildLDAPURL(pooler *apiv1.Pooler) (string, error) {
 		port = int(*ldap.Port)
 	}
 	scheme := "ldap"
-	if ldap.TLS != nil && ldap.TLS.Enabled {
+	if ldap.TLS != nil && ldap.TLS.Enabled && port == apiv1.DefaultLDAPSPort {
 		scheme = "ldaps"
 	}
 	filter := ldap.SearchFilter
@@ -114,6 +122,17 @@ func buildAuthLDAPOptions(pooler *apiv1.Pooler) (string, error) {
 		opts += fmt.Sprintf(" ldapbinddn=\"%s\"", pooler.Spec.LDAP.BindDN)
 	}
 	opts += fmt.Sprintf(" ldapbindpasswdfile=\"%s\"", GetLDAPBindPasswordFilePath())
+
+	// StartTLS: when TLS is requested but the URL is plain ldap:// (not 636),
+	// tell pgbouncer to upgrade the connection after the initial TCP handshake.
+	port := apiv1.DefaultLDAPPort
+	if pooler.Spec.LDAP.Port != nil {
+		port = int(*pooler.Spec.LDAP.Port)
+	}
+	if pooler.Spec.LDAP.TLS != nil && pooler.Spec.LDAP.TLS.Enabled && port != apiv1.DefaultLDAPSPort {
+		opts += " ldaptls=1"
+	}
+
 	if pooler.Spec.LDAP.TLS != nil && pooler.Spec.LDAP.TLS.SkipVerify {
 		opts += " ldaptls_noverify=1"
 	}
