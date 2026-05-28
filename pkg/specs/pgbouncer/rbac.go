@@ -56,6 +56,15 @@ func Role(pooler *apiv1.Pooler) *rbacv1.Role {
 			secretNames = append(secretNames, pooler.Status.Secrets.ClientTLS.Name)
 		}
 	}
+	if pooler.Spec.LDAP != nil && pooler.Spec.LDAP.Enabled &&
+		pooler.Spec.LDAP.Credentials != nil && pooler.Spec.LDAP.Credentials.SecretName != "" {
+		secretNames = append(secretNames, pooler.Spec.LDAP.Credentials.SecretName)
+	}
+	// Optional extra userlist secret (mixed LDAP+scram mode). Always grant read
+	// access to the conventional name; the secret itself is optional and the
+	// reconciler swallows NotFound errors. Without the RBAC entry the bootstrap
+	// controller would fail with Forbidden instead.
+	secretNames = append(secretNames, pooler.Spec.Cluster.Name+"-pgbouncer-userlist")
 
 	return &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{
 		Name: pooler.Name, Namespace: pooler.Namespace,

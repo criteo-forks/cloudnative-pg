@@ -86,8 +86,12 @@ const (
 
 [pgbouncer]
 pool_mode = {{ .Pooler.Spec.PgBouncer.PoolMode }}
+{{- if .AuthQueryUser }}
 auth_user = {{ .AuthQueryUser }}
+{{- end }}
+{{- if .AuthQuery }}
 auth_query = {{ .AuthQuery }}
+{{- end }}
 auth_dbname = {{ .AuthDBName }}
 
 {{ .Parameters -}}
@@ -160,6 +164,21 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 		authQuerySecret = secrets.ServerTLS
 	}
 
+	// In mixed-auth HBA mode (spec.ldap enabled + spec.pgbouncer.pg_hba rules)
+	// the user did not opt into a backend cert/authquery secret, but the
+	// reconciler still loads the default `<cluster>-pooler` cert as the
+	// authQuery secret. Letting that fall through would render
+	// `auth_user = cnpg_pooler_pgbouncer` in pgbouncer.ini and pgbouncer 1.25.1
+	// would reject any client matching an LDAP HBA rule with
+	// "LDAP can't be used together with database authentication"
+	// (client.c:1069). Drop the implicit cert so the controller falls back to
+	// auth_file/userlist.txt, which is what the mixed-auth design needs.
+	if isHBAModeWithLDAP(pooler) && pooler.Spec.PgBouncer != nil &&
+		pooler.Spec.PgBouncer.AuthQuerySecret == nil &&
+		pooler.Spec.PgBouncer.ServerTLSSecret == nil {
+		authQuerySecret = nil
+	}
+
 	if authQuerySecret != nil {
 		authQuerySecretType, err := detectSecretType(authQuerySecret)
 		if err != nil {
@@ -194,16 +213,33 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 
 	parameters := buildPgBouncerParameters(pooler.Spec.PgBouncer.Parameters)
 
+	if err := applyLDAPParameters(pooler, parameters); err != nil {
+		return nil, fmt.Errorf("while applying LDAP parameters: %w", err)
+	}
+
 	if isCertAuth {
 		parameters["server_tls_cert_file"] = authUserCrtPath
 		parameters["server_tls_key_file"] = authUserKeyPath
-	} else {
+	} else if !isLDAPEnabled(pooler) || isHBAModeWithLDAP(pooler) {
+		// auth_file is needed for password-based users. In HBA mode with LDAP,
+		// only some users use LDAP; the others need userlist.txt for lookup.
 		parameters["auth_file"] = authFilePath
 	}
 
 	if secrets.ServerTLS != nil {
 		parameters["server_tls_cert_file"] = serverTLSCertPath
 		parameters["server_tls_key_file"] = serverTLSKeyPath
+	}
+
+	// In mixed-auth HBA mode without an explicit secret, do not render the
+	// default auth_query either: pgbouncer 1.25.1 treats any non-empty
+	// auth_query as "database authentication" enabled (client.c:1069) and
+	// rejects every client matching an LDAP HBA rule with
+	// "LDAP can't be used together with database authentication".
+	authQuery := pooler.GetAuthQuery()
+	if authQuerySecret == nil && isHBAModeWithLDAP(pooler) &&
+		pooler.Spec.PgBouncer != nil && pooler.Spec.PgBouncer.AuthQuery == "" {
+		authQuery = ""
 	}
 
 	templateData := struct {
@@ -216,7 +252,7 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 		PgHba             []string
 	}{
 		Pooler:            pooler,
-		AuthQuery:         pooler.GetAuthQuery(),
+		AuthQuery:         authQuery,
 		AuthQueryUser:     authQueryUser,
 		AuthQueryPassword: authQueryPassword,
 		AuthDBName:        apiv1.PoolerAuthDBName,
@@ -236,10 +272,23 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 	}
 	files[filepath.Join(ConfigsDir, PgBouncerIniFileName)] = pgbouncerIni.Bytes()
 
-	if !isCertAuth {
+	// userlist.txt is used for password-based auth. In HBA mode with LDAP,
+	// it is still needed for non-LDAP users defined in pg_hba rules.
+	if !isCertAuth && (!isLDAPEnabled(pooler) || isHBAModeWithLDAP(pooler)) {
 		err := pgBouncerUserListTemplate.Execute(&pgbouncerUserList, templateData)
 		if err != nil {
 			return nil, fmt.Errorf("while executing %s template: %w", PgBouncerUserListFileName, err)
+		}
+		// Append any extra userlist entries provided by the operator via the
+		// "<cluster>-pgbouncer-userlist" Opaque secret (used in mixed LDAP+scram
+		// mode to inject scram hashes for non-LDAP users like rdsprobe and
+		// user-<db>-f, since the default auth_query path is disabled).
+		if len(secrets.ExtraUserlist) > 0 {
+			if pgbouncerUserList.Len() > 0 &&
+				pgbouncerUserList.Bytes()[pgbouncerUserList.Len()-1] != '\n' {
+				pgbouncerUserList.WriteByte('\n')
+			}
+			pgbouncerUserList.Write(secrets.ExtraUserlist)
 		}
 		files[filepath.Join(ConfigsDir, PgBouncerUserListFileName)] = pgbouncerUserList.Bytes()
 	}

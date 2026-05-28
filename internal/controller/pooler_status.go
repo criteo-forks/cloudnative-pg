@@ -49,6 +49,25 @@ func (r *PoolerReconciler) updatePoolerStatus(
 		}
 	}
 
+	if resources.LDAPBindSecret != nil {
+		updatedStatus.Secrets.PgBouncerSecrets.LDAPBind = apiv1.SecretVersion{
+			Name:    resources.LDAPBindSecret.Name,
+			Version: resources.LDAPBindSecret.ResourceVersion,
+		}
+	}
+
+	if resources.ExtraUserlistSecret != nil {
+		updatedStatus.Secrets.PgBouncerSecrets.ExtraUserlist = apiv1.SecretVersion{
+			Name:    resources.ExtraUserlistSecret.Name,
+			Version: resources.ExtraUserlistSecret.ResourceVersion,
+		}
+	} else {
+		// Clear ExtraUserlist when the optional secret is absent, so deleting
+		// `<cluster>-pgbouncer-userlist` after it existed doesn't leave a stale
+		// {name, version} pair in Status. Same shape as the ServerTLS clear above.
+		updatedStatus.Secrets.PgBouncerSecrets.ExtraUserlist = apiv1.SecretVersion{}
+	}
+
 	if resources.ServerCASecret != nil {
 		updatedStatus.Secrets.ServerCA = apiv1.SecretVersion{
 			Name:    resources.ServerCASecret.Name,

@@ -40,6 +40,14 @@ type Secrets struct {
 
 	// The CA that will be used to validate the connections to PostgreSQL
 	ServerCA *corev1.Secret
+
+	// Extra userlist.txt content to append to the generated userlist.txt.
+	// Loaded from an optional Opaque secret named "<cluster>-pgbouncer-userlist"
+	// in the Pooler's namespace, with key "userlist.txt". Each line is appended
+	// verbatim to the generated userlist.txt. Use this to provide scram-sha-256
+	// hashes for non-LDAP users (rdsprobe, user-<db>-f, …) when running in mixed
+	// LDAP+scram mode where the default auth_query path is disabled.
+	ExtraUserlist []byte
 }
 
 // ConfigurationFiles is a set of configuration files that are needed for

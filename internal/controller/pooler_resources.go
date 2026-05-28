@@ -52,6 +52,15 @@ type poolerManagedResources struct {
 	// This is the root certificate to validate client certificates.
 	ClientCASecret *corev1.Secret
 
+	// This is the secret containing the LDAP bind password (when LDAP is enabled)
+	LDAPBindSecret *corev1.Secret
+
+	// This is the optional secret carrying extra `userlist.txt` entries (e.g.
+	// scram-sha-256 hashes for non-LDAP users in mixed-auth mode). Tracked here
+	// so its ResourceVersion shows up in Status.Secrets.PgBouncerSecrets and a
+	// rotation triggers a pooler reconcile/pod rollout.
+	ExtraUserlistSecret *corev1.Secret
+
 	// This is the pgbouncer deployment
 	Deployment *appsv1.Deployment
 
@@ -102,6 +111,26 @@ func (r *PoolerReconciler) getManagedResources(
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Get the LDAP bind secret if LDAP is enabled
+	if pooler.Spec.LDAP != nil && pooler.Spec.LDAP.Credentials != nil &&
+		pooler.Spec.LDAP.Credentials.SecretName != "" {
+		result.LDAPBindSecret, err = getSecretOrNil(
+			ctx, r.Client, client.ObjectKey{Name: pooler.Spec.LDAP.Credentials.SecretName, Namespace: pooler.Namespace})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Optional extra userlist secret. Loading it here keeps its ResourceVersion
+	// in poolerManagedResources so the status reconciler can record it and any
+	// rotation triggers a pod rollout. getSecretOrNil swallows NotFound only.
+	extraUserlistName := pooler.Spec.Cluster.Name + "-pgbouncer-userlist"
+	result.ExtraUserlistSecret, err = getSecretOrNil(
+		ctx, r.Client, client.ObjectKey{Name: extraUserlistName, Namespace: pooler.Namespace})
+	if err != nil {
+		return nil, err
 	}
 
 	// Get the server CA secret
