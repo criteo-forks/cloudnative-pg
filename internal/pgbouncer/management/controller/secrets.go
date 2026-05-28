@@ -24,6 +24,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -96,15 +97,22 @@ func getSecrets(ctx context.Context, client ctrl.Client, pooler *apiv1.Pooler) (
 	// scram hashes for non-LDAP users (rdsprobe, user-<db>-f, …) on its own.
 	// The operator (or a sidecar CronJob) populates this Opaque secret out-of-band
 	// from pg_authid.rolpassword, and the controller appends its content verbatim
-	// to the generated userlist.txt.
+	// to the generated userlist.txt. NotFound is the expected non-error path; any
+	// other error is propagated so it shows up in reconciliation logs instead of
+	// being silently swallowed.
 	extraName := pooler.Spec.Cluster.Name + "-pgbouncer-userlist"
 	var extraSecret corev1.Secret
-	if err := client.Get(ctx,
+	switch err := client.Get(ctx,
 		types.NamespacedName{Name: extraName, Namespace: pooler.Namespace},
-		&extraSecret); err == nil {
+		&extraSecret); {
+	case err == nil:
 		if data, ok := extraSecret.Data[config.PgBouncerUserListFileName]; ok {
 			result.ExtraUserlist = data
 		}
+	case apierrs.IsNotFound(err):
+		// optional, nothing to do
+	default:
+		return nil, fmt.Errorf("while getting extra userlist secret %q: %w", extraName, err)
 	}
 
 	return result, nil

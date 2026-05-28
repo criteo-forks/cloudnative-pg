@@ -9411,6 +9411,16 @@ spec:
                             description: The ResourceVersion of the secret
                             type: string
                         type: object
+                      extraUserlist:
+                        description: The extra userlist secret version (`<cluster>-pgbouncer-userlist`).
+                        properties:
+                          name:
+                            description: The name of the secret
+                            type: string
+                          version:
+                            description: The ResourceVersion of the secret
+                            type: string
+                        type: object
                       ldapBind:
                         description: The LDAP bind secret version
                         properties:

@@ -56,6 +56,13 @@ func (r *PoolerReconciler) updatePoolerStatus(
 		}
 	}
 
+	if resources.ExtraUserlistSecret != nil {
+		updatedStatus.Secrets.PgBouncerSecrets.ExtraUserlist = apiv1.SecretVersion{
+			Name:    resources.ExtraUserlistSecret.Name,
+			Version: resources.ExtraUserlistSecret.ResourceVersion,
+		}
+	}
+
 	if resources.ServerCASecret != nil {
 		updatedStatus.Secrets.ServerCA = apiv1.SecretVersion{
 			Name:    resources.ServerCASecret.Name,

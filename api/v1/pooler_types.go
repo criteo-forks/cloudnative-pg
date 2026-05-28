@@ -348,7 +348,12 @@ type PoolerSecrets struct {
 }
 
 // PgBouncerSecrets contains the versions of the secrets used
-// by pgbouncer
+// by pgbouncer.
+//
+// The convention-named optional secret "<cluster>-pgbouncer-userlist"
+// (carrying extra userlist.txt entries for mixed-auth scram users) is
+// tracked here so its rotation triggers a pooler reconcile and pod
+// rollout, the same way LDAPBind does.
 type PgBouncerSecrets struct {
 	// The auth query secret version
 	// +optional
@@ -357,6 +362,10 @@ type PgBouncerSecrets struct {
 	// The LDAP bind secret version
 	// +optional
 	LDAPBind SecretVersion `json:"ldapBind,omitempty"`
+
+	// The extra userlist secret version (`<cluster>-pgbouncer-userlist`).
+	// +optional
+	ExtraUserlist SecretVersion `json:"extraUserlist,omitempty"`
 }
 
 // SecretVersion contains a secret name and its ResourceVersion

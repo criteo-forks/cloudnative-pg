@@ -339,6 +339,19 @@ func getPoolersUsingSecret(poolers apiv1.PoolerList, secret *corev1.Secret) (req
 			)
 			continue
 		}
+
+		// Convention-named optional userlist secret. Watching it ensures that
+		// rotating scram hashes (e.g. on password rotation) triggers a pooler
+		// reconcile and a pod rollout.
+		if pooler.Spec.Cluster.Name+"-pgbouncer-userlist" == secret.Name {
+			requests = append(requests,
+				types.NamespacedName{
+					Name:      pooler.Name,
+					Namespace: pooler.Namespace,
+				},
+			)
+			continue
+		}
 	}
 	return requests
 }
