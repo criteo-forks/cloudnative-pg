@@ -26,6 +26,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
@@ -43,6 +44,17 @@ import (
 
 // ldapBindSecretVolumeName is the name of the volume for the LDAP bind password Secret.
 const ldapBindSecretVolumeName = "ldap-bind-secret"
+
+var defaultBootstrapControllerResources = corev1.ResourceRequirements{
+	Requests: corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("100m"),
+		corev1.ResourceMemory: resource.MustParse("256Mi"),
+	},
+	Limits: corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("100m"),
+		corev1.ResourceMemory: resource.MustParse("256Mi"),
+	},
+}
 
 // Deployment create the deployment of pgbouncer, given
 // the configurations we have in the pooler specifications
@@ -100,7 +112,7 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 		WithInitContainerCommand(specs.BootstrapControllerContainerName,
 			[]string{"/manager", "bootstrap", "/controller/manager"},
 			true).
-		WithInitContainerResources(specs.BootstrapControllerContainerName, pooler.GetResourcesRequirements(), true).
+		WithInitContainerResources(specs.BootstrapControllerContainerName, getBootstrapControllerResources(pooler), true).
 		WithInitContainerSecurityContext(specs.BootstrapControllerContainerName,
 			specs.GetSecurityContext(cluster), true).
 		WithVolume(&corev1.Volume{
@@ -172,6 +184,23 @@ func Deployment(pooler *apiv1.Pooler, cluster *apiv1.Cluster) (*appsv1.Deploymen
 			Strategy: getDeploymentStrategy(pooler.Spec.DeploymentStrategy),
 		},
 	}, nil
+}
+
+func getBootstrapControllerResources(pooler *apiv1.Pooler) corev1.ResourceRequirements {
+	if pooler.Spec.Template != nil {
+		for _, initContainer := range pooler.Spec.Template.Spec.InitContainers {
+			if initContainer.Name == specs.BootstrapControllerContainerName &&
+				(initContainer.Resources.Requests != nil || initContainer.Resources.Limits != nil) {
+				return initContainer.Resources
+			}
+		}
+
+		if pooler.Spec.Template.Spec.Resources != nil {
+			return *pooler.Spec.Template.Spec.Resources
+		}
+	}
+
+	return defaultBootstrapControllerResources
 }
 
 func computeTemplateHash(pooler *apiv1.Pooler, operatorImageName string) (string, error) {

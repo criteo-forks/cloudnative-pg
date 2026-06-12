@@ -158,6 +158,18 @@ var _ = Describe("Deployment", func() {
 		Expect(deployment.Spec.Template.Spec.InitContainers[0].Name).To(Equal(specs.BootstrapControllerContainerName))
 	})
 
+	It("sets default bootstrap-controller resources", func() {
+		deployment, err := Deployment(pooler, cluster)
+		Expect(err).ShouldNot(HaveOccurred())
+
+		Expect(deployment.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+		initResources := deployment.Spec.Template.Spec.InitContainers[0].Resources
+		Expect(initResources.Requests).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("100m")))
+		Expect(initResources.Requests).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("256Mi")))
+		Expect(initResources.Limits).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse("100m")))
+		Expect(initResources.Limits).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse("256Mi")))
+	})
+
 	It("sets the correct service account name when not specified", func() {
 		deployment, err := Deployment(pooler, cluster)
 		Expect(err).ShouldNot(HaveOccurred())
