@@ -809,6 +809,12 @@ func (r *InstanceReconciler) reconcilePgbouncerAuthUser(
 		}
 	}
 
+	_, err = tx.Exec(fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s",
+		userSearchFunctionSchema, apiv1.PGBouncerPoolerUserName))
+	if err != nil {
+		return err
+	}
+
 	var existsFunction bool
 	row = tx.QueryRow(fmt.Sprintf("SELECT COUNT(*) > 0 FROM pg_catalog.pg_proc WHERE proname='%s' and prosrc='%s'",
 		userSearchFunctionName,
