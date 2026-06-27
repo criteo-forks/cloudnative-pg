@@ -298,6 +298,15 @@ var _ = Describe("HBA mode with LDAP (mixed authentication)", func() {
 		Expect(isHBAModeWithLDAP(p)).To(BeFalse())
 	})
 
+	It("isHBAModeWithLDAP returns true when LDAP is configured inline in pg_hba", func() {
+		p := poolerWithoutLDAP()
+		p.Spec.PgBouncer.PgHBA = []string{
+			"host all basic-user 0.0.0.0/0 scram-sha-256",
+			"host all all 0.0.0.0/0 ldap ldapserver=ldap.example.com ldapbasedn=\"dc=example,dc=com\"",
+		}
+		Expect(isHBAModeWithLDAP(p)).To(BeTrue())
+	})
+
 	It("in HBA mode, applyLDAPParameters preserves auth_type=hba and injects auth_ldap_options", func() {
 		pooler := poolerWithHBAAndLDAP()
 		params := buildPgBouncerParameters(nil)

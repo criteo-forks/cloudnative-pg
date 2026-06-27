@@ -40,14 +40,42 @@ func isLDAPEnabled(pooler *apiv1.Pooler) bool {
 	return pooler != nil && pooler.Spec.LDAP != nil && pooler.Spec.LDAP.Enabled
 }
 
-// isHBAModeWithLDAP returns true when pg_hba rules are defined AND LDAP is enabled.
+// isHBAModeWithLDAP returns true when pg_hba rules are defined and LDAP auth is
+// active either through spec.ldap or through inline ldap pg_hba rules.
 // In this mode auth_type=hba is preserved so PgBouncer routes each connection
-// through the HBA file, while auth_ldap_options is still injected for the rules
-// that use the ldap method. userlist.txt is also generated for non-LDAP users.
+// through the HBA file. userlist.txt is also generated for non-LDAP users.
 func isHBAModeWithLDAP(pooler *apiv1.Pooler) bool {
-	return isLDAPEnabled(pooler) &&
-		pooler.Spec.PgBouncer != nil &&
-		len(pooler.Spec.PgBouncer.PgHBA) > 0
+	if pooler == nil || pooler.Spec.PgBouncer == nil || len(pooler.Spec.PgBouncer.PgHBA) == 0 {
+		return false
+	}
+	if pooler.Spec.LDAP != nil {
+		return pooler.Spec.LDAP.Enabled
+	}
+	return pgHBAContainsLDAP(pooler.Spec.PgBouncer.PgHBA)
+}
+
+func pgHBAContainsLDAP(rules []string) bool {
+	for _, rule := range rules {
+		if pgHBARuleUsesLDAP(rule) {
+			return true
+		}
+	}
+	return false
+}
+
+func pgHBARuleUsesLDAP(rule string) bool {
+	fields := strings.Fields(rule)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "local":
+		return len(fields) > 3 && fields[3] == "ldap"
+	case "host", "hostssl", "hostnossl", "hostgssenc", "hostnogssenc":
+		return len(fields) > 4 && fields[4] == "ldap"
+	default:
+		return false
+	}
 }
 
 // encodeLDAPDN percent-encodes a Distinguished Name for use in an LDAP URL path
@@ -158,4 +186,3 @@ func applyLDAPParameters(pooler *apiv1.Pooler, parameters map[string]string) err
 	parameters["auth_ldap_options"] = opts
 	return nil
 }
-
