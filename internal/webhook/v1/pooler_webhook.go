@@ -195,17 +195,23 @@ func (v *PoolerCustomValidator) validatePgBouncer(r *apiv1.Pooler) field.ErrorLi
 		}
 	}
 
-	hasPGAuthentication := (r.Spec.PgBouncer.AuthQuerySecret != nil && r.Spec.PgBouncer.AuthQuerySecret.Name != "") ||
-		(r.Spec.PgBouncer.ServerTLSSecret != nil && r.Spec.PgBouncer.ServerTLSSecret.Name != "")
+	hasAuthQuerySecret := r.Spec.PgBouncer.AuthQuerySecret != nil && r.Spec.PgBouncer.AuthQuerySecret.Name != ""
+	hasServerTLSSecret := r.Spec.PgBouncer.ServerTLSSecret != nil && r.Spec.PgBouncer.ServerTLSSecret.Name != ""
+	hasAuthQuery := r.Spec.PgBouncer.AuthQuery != ""
+	serverTLSOnlyForMixedLDAP := hasServerTLSSecret && r.IsLDAPEnabledHBAMode() && !hasAuthQuerySecret && !hasAuthQuery
+	hasPGAuthentication := hasAuthQuerySecret || hasServerTLSSecret
+	if serverTLSOnlyForMixedLDAP {
+		hasPGAuthentication = false
+	}
 
 	var result field.ErrorList
 	switch {
-	case hasPGAuthentication && r.Spec.PgBouncer.AuthQuery == "":
+	case hasPGAuthentication && !hasAuthQuery:
 		result = append(result,
 			field.Invalid(
 				field.NewPath("spec", "pgbouncer", "authQuery"),
 				"", "must specify an auth query when providing an auth query secret"))
-	case !hasPGAuthentication && r.Spec.PgBouncer.AuthQuery != "":
+	case !hasPGAuthentication && hasAuthQuery:
 		result = append(result,
 			field.Invalid(
 				field.NewPath("spec", "pgbouncer", "authQuerySecret", "name"),
@@ -282,9 +288,8 @@ func (v *PoolerCustomValidator) validateLDAP(r *apiv1.Pooler) field.ErrorList {
 	// because some users authenticate via scram-sha-256 and need password lookup.
 	// In pure LDAP mode (no pg_hba), auth_query is mutually exclusive with LDAP.
 	isHBAMode := r.Spec.PgBouncer != nil && len(r.Spec.PgBouncer.PgHBA) > 0
-	hasAuthQuery := r.Spec.PgBouncer != nil && (
-		r.Spec.PgBouncer.AuthQuery != "" ||
-			(r.Spec.PgBouncer.AuthQuerySecret != nil && r.Spec.PgBouncer.AuthQuerySecret.Name != ""))
+	hasAuthQuery := r.Spec.PgBouncer != nil && (r.Spec.PgBouncer.AuthQuery != "" ||
+		(r.Spec.PgBouncer.AuthQuerySecret != nil && r.Spec.PgBouncer.AuthQuerySecret.Name != ""))
 	if hasAuthQuery && !isHBAMode {
 		result = append(result,
 			field.Invalid(

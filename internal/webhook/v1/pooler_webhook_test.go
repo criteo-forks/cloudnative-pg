@@ -48,6 +48,18 @@ var _ = Describe("Pooler validation", func() {
 		Expect(v.validatePgBouncer(pooler)).NotTo(BeEmpty())
 	})
 
+	It("doesn't allow specifying serverTLSSecret without any authQuery outside LDAP HBA mode", func() {
+		pooler := &apiv1.Pooler{
+			Spec: apiv1.PoolerSpec{
+				PgBouncer: &apiv1.PgBouncerSpec{
+					ServerTLSSecret: &apiv1.LocalObjectReference{Name: "test"},
+				},
+			},
+		}
+
+		Expect(v.validatePgBouncer(pooler)).NotTo(BeEmpty())
+	})
+
 	It("doesn't allow specifying authQuery without any authQuerySecret", func() {
 		pooler := &apiv1.Pooler{
 			Spec: apiv1.PoolerSpec{
@@ -152,10 +164,10 @@ var _ = Describe("Pooler LDAP validation", func() {
 				Cluster:   apiv1.LocalObjectReference{Name: "my-cluster"},
 				PgBouncer: &apiv1.PgBouncerSpec{},
 				LDAP: &apiv1.PoolerLDAPConfig{
-					Enabled:    true,
-					Host:       "ldap.example.com",
-					BaseDN:     "dc=example,dc=com",
-					BindDN:     "cn=admin,dc=example,dc=com",
+					Enabled:     true,
+					Host:        "ldap.example.com",
+					BaseDN:      "dc=example,dc=com",
+					BindDN:      "cn=admin,dc=example,dc=com",
 					Credentials: &apiv1.PoolerLDAPCredentials{SecretName: "ldap-secret"},
 				},
 			},
@@ -172,9 +184,9 @@ var _ = Describe("Pooler LDAP validation", func() {
 				Cluster:   apiv1.LocalObjectReference{Name: "my-cluster"},
 				PgBouncer: &apiv1.PgBouncerSpec{},
 				LDAP: &apiv1.PoolerLDAPConfig{
-					Enabled:    true,
-					BaseDN:     "dc=example,dc=com",
-					BindDN:     "cn=admin,dc=example,dc=com",
+					Enabled:     true,
+					BaseDN:      "dc=example,dc=com",
+					BindDN:      "cn=admin,dc=example,dc=com",
 					Credentials: &apiv1.PoolerLDAPCredentials{SecretName: "ldap-secret"},
 				},
 			},
@@ -204,10 +216,10 @@ var _ = Describe("Pooler LDAP validation", func() {
 				Cluster:   apiv1.LocalObjectReference{Name: "my-cluster"},
 				PgBouncer: &apiv1.PgBouncerSpec{},
 				LDAP: &apiv1.PoolerLDAPConfig{
-					Enabled:    true,
-					Host:       "ldap.example.com",
-					BaseDN:     "dc=example,dc=com",
-					BindDN:     "cn=admin,dc=example,dc=com",
+					Enabled:     true,
+					Host:        "ldap.example.com",
+					BaseDN:      "dc=example,dc=com",
+					BindDN:      "cn=admin,dc=example,dc=com",
 					Credentials: &apiv1.PoolerLDAPCredentials{SecretName: "ldap-secret"},
 				},
 			},
@@ -233,9 +245,9 @@ var _ = Describe("Pooler LDAP validation", func() {
 				Cluster:   apiv1.LocalObjectReference{Name: "my-cluster"},
 				PgBouncer: &apiv1.PgBouncerSpec{},
 				LDAP: &apiv1.PoolerLDAPConfig{
-					Enabled:    true,
-					Host:       "ldap.example.com",
-					BindDN:     "cn=admin,dc=example,dc=com",
+					Enabled:     true,
+					Host:        "ldap.example.com",
+					BindDN:      "cn=admin,dc=example,dc=com",
 					Credentials: &apiv1.PoolerLDAPCredentials{SecretName: "ldap-secret"},
 				},
 			},
@@ -249,9 +261,9 @@ var _ = Describe("Pooler LDAP validation", func() {
 				Cluster:   apiv1.LocalObjectReference{Name: "my-cluster"},
 				PgBouncer: &apiv1.PgBouncerSpec{},
 				LDAP: &apiv1.PoolerLDAPConfig{
-					Enabled:    true,
-					Host:       "ldap.example.com",
-					BaseDN:     "dc=example,dc=com",
+					Enabled:     true,
+					Host:        "ldap.example.com",
+					BaseDN:      "dc=example,dc=com",
 					Credentials: &apiv1.PoolerLDAPCredentials{SecretName: "ldap-secret"},
 				},
 			},
@@ -273,10 +285,10 @@ var _ = Describe("Pooler full validation with LDAP", func() {
 				Cluster:   apiv1.LocalObjectReference{Name: "my-cluster"},
 				PgBouncer: &apiv1.PgBouncerSpec{},
 				LDAP: &apiv1.PoolerLDAPConfig{
-					Enabled:    true,
-					Host:       "ldap.example.com",
-					BaseDN:     "dc=example,dc=com",
-					BindDN:     "cn=admin,dc=example,dc=com",
+					Enabled:     true,
+					Host:        "ldap.example.com",
+					BaseDN:      "dc=example,dc=com",
+					BindDN:      "cn=admin,dc=example,dc=com",
 					Credentials: &apiv1.PoolerLDAPCredentials{SecretName: "ldap-secret"},
 				},
 			},
@@ -290,14 +302,14 @@ var _ = Describe("Pooler full validation with LDAP", func() {
 			Spec: apiv1.PoolerSpec{
 				Cluster: apiv1.LocalObjectReference{Name: "my-cluster"},
 				PgBouncer: &apiv1.PgBouncerSpec{
-					AuthQuery: "SELECT 1",
+					AuthQuery:       "SELECT 1",
 					AuthQuerySecret: &apiv1.LocalObjectReference{Name: "auth-secret"},
 				},
 				LDAP: &apiv1.PoolerLDAPConfig{
-					Enabled:    true,
-					Host:       "ldap.example.com",
-					BaseDN:     "dc=example,dc=com",
-					BindDN:     "cn=admin,dc=example,dc=com",
+					Enabled:     true,
+					Host:        "ldap.example.com",
+					BaseDN:      "dc=example,dc=com",
+					BindDN:      "cn=admin,dc=example,dc=com",
 					Credentials: &apiv1.PoolerLDAPCredentials{SecretName: "ldap-secret"},
 				},
 			},
@@ -307,7 +319,6 @@ var _ = Describe("Pooler full validation with LDAP", func() {
 		Expect(errs.ToAggregate().Error()).To(ContainSubstring("mutually exclusive"))
 	})
 })
-
 
 var _ = Describe("Pooler HBA mode with mixed authentication", func() {
 	v := &PoolerCustomValidator{}
@@ -341,6 +352,27 @@ var _ = Describe("Pooler HBA mode with mixed authentication", func() {
 		}
 		Expect(v.validateLDAP(pooler)).To(BeEmpty(),
 			"LDAP + authQuery should be allowed when pg_hba rules are defined")
+	})
+
+	It("allows LDAP HBA mode with serverTLSSecret and no authQuery", func() {
+		pooler := &apiv1.Pooler{
+			Spec: apiv1.PoolerSpec{
+				Cluster: apiv1.LocalObjectReference{Name: "cluster"},
+				PgBouncer: &apiv1.PgBouncerSpec{
+					ServerTLSSecret: &apiv1.LocalObjectReference{Name: "cluster-pooler"},
+					PgHBA: []string{
+						"host tutu ldap-user 0.0.0.0/0 ldap",
+						"host all basic-user 0.0.0.0/0 scram-sha-256",
+					},
+				},
+				LDAP: ldapConfig(),
+			},
+		}
+
+		Expect(v.validatePgBouncer(pooler)).To(BeEmpty(),
+			"serverTLSSecret is only a backend client certificate in LDAP HBA mode")
+		Expect(pooler.IsAutomatedIntegration()).To(BeTrue(),
+			"serverTLSSecret alone must not force manual auth_query mode in LDAP HBA mode")
 	})
 
 	It("rejects LDAP + authQuery when pg_hba is empty (pure LDAP mode)", func() {

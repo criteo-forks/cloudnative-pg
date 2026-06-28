@@ -86,6 +86,15 @@ func (in *Pooler) GetAuthQuery() string {
 	return DefaultPgBouncerPoolerAuthQuery
 }
 
+// IsLDAPEnabledHBAMode returns whether LDAP is enabled and PgBouncer HBA rules
+// are configured. In this mode LDAP is selected per HBA rule and PgBouncer must
+// not be forced into global auth_query authentication.
+func (in *Pooler) IsLDAPEnabledHBAMode() bool {
+	return in != nil &&
+		in.Spec.LDAP != nil && in.Spec.LDAP.Enabled &&
+		in.Spec.PgBouncer != nil && len(in.Spec.PgBouncer.PgHBA) > 0
+}
+
 // IsAutomatedIntegration returns whether the Pooler integration with the
 // Cluster is automated or not.
 func (in *Pooler) IsAutomatedIntegration() bool {
@@ -95,9 +104,11 @@ func (in *Pooler) IsAutomatedIntegration() bool {
 	// If the user specified an AuthQuerySecret or an AuthQuery, the integration
 	// is not going to be handled by the operator.
 	if in.Spec.PgBouncer.AuthQuery != "" ||
-		(in.Spec.PgBouncer.AuthQuerySecret != nil && in.Spec.PgBouncer.AuthQuerySecret.Name != "") ||
-		(in.Spec.PgBouncer.ServerTLSSecret != nil && in.Spec.PgBouncer.ServerTLSSecret.Name != "") {
+		(in.Spec.PgBouncer.AuthQuerySecret != nil && in.Spec.PgBouncer.AuthQuerySecret.Name != "") {
 		return false
+	}
+	if in.Spec.PgBouncer.ServerTLSSecret != nil && in.Spec.PgBouncer.ServerTLSSecret.Name != "" {
+		return in.IsLDAPEnabledHBAMode()
 	}
 	return true
 }

@@ -160,23 +160,19 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 	// if no user is provided we have to check the secret for a username, and we must be using basic auth
 	// if a user is provided it will overwrite the user in the secret, or we could be using cert auth
 	authQuerySecret := secrets.AuthQuery
-	if authQuerySecret == nil {
-		authQuerySecret = secrets.ServerTLS
-	}
 
 	// In mixed-auth HBA mode (spec.ldap enabled + spec.pgbouncer.pg_hba rules)
-	// the user did not opt into a backend cert/authquery secret, but the
-	// reconciler still loads the default `<cluster>-pooler` cert as the
-	// authQuery secret. Letting that fall through would render
-	// `auth_user = cnpg_pooler_pgbouncer` in pgbouncer.ini and pgbouncer 1.25.1
-	// would reject any client matching an LDAP HBA rule with
-	// "LDAP can't be used together with database authentication"
-	// (client.c:1069). Drop the implicit cert so the controller falls back to
-	// auth_file/userlist.txt, which is what the mixed-auth design needs.
-	if isHBAModeWithLDAP(pooler) && pooler.Spec.PgBouncer != nil &&
-		pooler.Spec.PgBouncer.AuthQuerySecret == nil &&
-		pooler.Spec.PgBouncer.ServerTLSSecret == nil {
+	// with no explicit auth_query, do not render any auth_query/auth_user even
+	// if the controller loaded a default or explicit TLS secret. PgBouncer 1.25.1
+	// rejects LDAP rules when database authentication is enabled, but we still
+	// may need the TLS secret below as server_tls_cert_file/server_tls_key_file
+	// for backend client certificate authentication to PostgreSQL.
+	suppressAuthQuery := isHBAModeWithLDAP(pooler) && pooler.Spec.PgBouncer != nil &&
+		pooler.Spec.PgBouncer.AuthQuerySecret == nil && pooler.Spec.PgBouncer.AuthQuery == ""
+	if suppressAuthQuery {
 		authQuerySecret = nil
+	} else if authQuerySecret == nil {
+		authQuerySecret = secrets.ServerTLS
 	}
 
 	if authQuerySecret != nil {
@@ -237,8 +233,7 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 	// rejects every client matching an LDAP HBA rule with
 	// "LDAP can't be used together with database authentication".
 	authQuery := pooler.GetAuthQuery()
-	if authQuerySecret == nil && isHBAModeWithLDAP(pooler) &&
-		pooler.Spec.PgBouncer != nil && pooler.Spec.PgBouncer.AuthQuery == "" {
+	if suppressAuthQuery {
 		authQuery = ""
 	}
 

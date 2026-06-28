@@ -342,6 +342,34 @@ var _ = Describe("HBA mode with LDAP (mixed authentication)", func() {
 		Expect(iniStr).To(ContainSubstring("auth_ldap_options"))
 	})
 
+	It("in HBA mode, serverTLSSecret provides backend TLS cert without enabling auth_query", func() {
+		pooler := poolerWithHBAAndLDAP()
+		pooler.Spec.PgBouncer.ServerTLSSecret = &apiv1.LocalObjectReference{Name: "my-cluster-pooler"}
+		secrets := minimalSecrets()
+		secrets.AuthQuery = nil
+		secrets.ServerTLS = &corev1.Secret{
+			Type: corev1.SecretTypeTLS,
+			Data: map[string][]byte{
+				certs.TLSCertKey:       []byte("backend-cert"),
+				certs.TLSPrivateKeyKey: []byte("backend-key"),
+			},
+		}
+
+		files, err := BuildConfigurationFiles(pooler, secrets)
+		Expect(err).NotTo(HaveOccurred())
+
+		iniPath := filepath.Join(ConfigsDir, PgBouncerIniFileName)
+		iniStr := string(files[iniPath])
+		Expect(iniStr).To(ContainSubstring("auth_file = " + authFilePath))
+		Expect(iniStr).NotTo(ContainSubstring("auth_user ="))
+		Expect(iniStr).NotTo(ContainSubstring("auth_query ="))
+		Expect(iniStr).To(ContainSubstring("server_tls_cert_file = " + serverTLSCertPath))
+		Expect(iniStr).To(ContainSubstring("server_tls_key_file = " + serverTLSKeyPath))
+		Expect(files[serverTLSCertPath]).To(Equal([]byte("backend-cert")))
+		Expect(files[serverTLSKeyPath]).To(Equal([]byte("backend-key")))
+		Expect(files).To(HaveKey(filepath.Join(ConfigsDir, PgBouncerUserListFileName)))
+	})
+
 	It("in pure LDAP mode, BuildConfigurationFiles does NOT generate userlist.txt", func() {
 		pooler := poolerWithLDAP()
 		secrets := minimalSecrets()
