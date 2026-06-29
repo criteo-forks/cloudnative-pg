@@ -270,9 +270,11 @@ func BuildConfigurationFiles(pooler *apiv1.Pooler, secrets *Secrets) (Configurat
 	// userlist.txt is used for password-based auth. In HBA mode with LDAP,
 	// it is still needed for non-LDAP users defined in pg_hba rules.
 	if !isCertAuth && (!isLDAPEnabled(pooler) || isHBAModeWithLDAP(pooler)) {
-		err := pgBouncerUserListTemplate.Execute(&pgbouncerUserList, templateData)
-		if err != nil {
-			return nil, fmt.Errorf("while executing %s template: %w", PgBouncerUserListFileName, err)
+		if authQueryUser != "" || authQueryPassword != "" {
+			err := pgBouncerUserListTemplate.Execute(&pgbouncerUserList, templateData)
+			if err != nil {
+				return nil, fmt.Errorf("while executing %s template: %w", PgBouncerUserListFileName, err)
+			}
 		}
 		// Append any extra userlist entries provided by the operator via the
 		// "<cluster>-pgbouncer-userlist" Opaque secret (used in mixed LDAP+scram

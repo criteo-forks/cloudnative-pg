@@ -347,6 +347,7 @@ var _ = Describe("HBA mode with LDAP (mixed authentication)", func() {
 		pooler.Spec.PgBouncer.ServerTLSSecret = &apiv1.LocalObjectReference{Name: "my-cluster-pooler"}
 		secrets := minimalSecrets()
 		secrets.AuthQuery = nil
+		secrets.ExtraUserlist = []byte("\"basic-user\" \"SCRAM-SHA-256$hash\"\n")
 		secrets.ServerTLS = &corev1.Secret{
 			Type: corev1.SecretTypeTLS,
 			Data: map[string][]byte{
@@ -368,6 +369,10 @@ var _ = Describe("HBA mode with LDAP (mixed authentication)", func() {
 		Expect(files[serverTLSCertPath]).To(Equal([]byte("backend-cert")))
 		Expect(files[serverTLSKeyPath]).To(Equal([]byte("backend-key")))
 		Expect(files).To(HaveKey(filepath.Join(ConfigsDir, PgBouncerUserListFileName)))
+
+		userlist := string(files[filepath.Join(ConfigsDir, PgBouncerUserListFileName)])
+		Expect(userlist).To(Equal("\"basic-user\" \"SCRAM-SHA-256$hash\"\n"))
+		Expect(userlist).NotTo(ContainSubstring("\"\" \"\""))
 	})
 
 	It("in pure LDAP mode, BuildConfigurationFiles does NOT generate userlist.txt", func() {
